@@ -1,0 +1,21 @@
+export type FanchantType = 'repeat' | 'diff';
+
+export interface WordTag {
+  charIndex: number; // grapheme index in text
+  offset: number; // ms offset from line start
+}
+
+export interface FanchantTag {
+  content: string;
+  duration: number;
+  type: FanchantType;
+  endTime: number; // startTime + duration
+}
+
+export interface LyricLine {
+  id: string;
+  startTime: number; // ms
+  text: string;
+  words: WordTag[];
+  fanchant?: FanchantTag;
+}
