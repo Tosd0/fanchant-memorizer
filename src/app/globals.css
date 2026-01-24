@@ -22,5 +22,72 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+@keyframes line-hit {
+  0% {
+    box-shadow: 0 0 0 rgba(16, 185, 129, 0);
+  }
+  40% {
+    box-shadow: 0 0 24px rgba(16, 185, 129, 0.45);
+  }
+  100% {
+    box-shadow: 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+@keyframes line-miss {
+  0% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-4px);
+  }
+  40% {
+    transform: translateX(4px);
+  }
+  60% {
+    transform: translateX(-3px);
+  }
+  80% {
+    transform: translateX(3px);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+@keyframes line-spark {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.2);
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-12px) scale(1.2);
+  }
+}
+
+.line-hit {
+  animation: line-hit 700ms ease-out;
+}
+
+.line-miss {
+  animation: line-miss 350ms ease-in-out;
+}
+
+.line-spark {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.9), rgba(16, 185, 129, 0));
+  pointer-events: none;
+  animation: line-spark 700ms ease-out;
 }
