@@ -3,6 +3,9 @@ import type { FanchantTag, FanchantType, LyricLine, WordTag } from './types';
 const timeTagRegex = /\[(\d{1,3}):(\d{2})(?:\.(\d{1,3}))?\]/g;
 
 const metaTagRegex = /^\[[a-zA-Z]+:.*\]$/;
+const offsetTagRegex = /^\[offset:\s*(-?\d+)\s*\]$/i;
+const inlineMetaTagRegex = /\[(?:ar|al|ti|tr|by|offset):[^\]]*\]/gi;
+const metaLineContentRegex = /^\[(?:ar|al|ti|tr|by)\s*:[^\]]*\]/i;
 
 const createId = (startTime: number, order: number) => `line_${startTime}_${order}`;
 
@@ -47,15 +50,23 @@ const parseWordTags = (payload: string): WordTag[] => {
   return tags;
 };
 
-const parseFanchantTag = (payload: string): Omit<FanchantTag, 'endTime'> | null => {
-  const regex = /<\s*([^,]+?)\s*,\s*(\d+)\s*,\s*(repeat|diff)\s*>/i;
-  const match = payload.match(regex);
+type ParsedFanchant = Omit<FanchantTag, 'endTime'> & { fullLine: boolean };
+
+const parseFanchantTag = (payload: string): ParsedFanchant | null => {
+  const match = payload.match(/<\s*([^>]*)\s*>/);
   if (!match) return null;
-  const [, content, duration, type] = match;
+  const parts = match[1].split(',').map((part) => part.trim());
+  if (parts.length < 2 || parts.length > 3) return null;
+  const [typeRaw, content, durationRaw = ''] = parts;
+  const type = typeRaw.toLowerCase();
+  if (!['repeat', 'diff', 'cheer'].includes(type)) return null;
+  const durationText = durationRaw.trim();
+  if (durationText.length > 0 && Number.isNaN(Number(durationText))) return null;
   return {
-    content: content.trim(),
-    duration: Number(duration),
-    type: type.trim().toLowerCase() as FanchantType,
+    content,
+    duration: durationText.length > 0 ? Number(durationText) : 0,
+    type: type as FanchantType,
+    fullLine: durationText.length === 0,
   };
 };
 
@@ -63,19 +74,31 @@ export const parseLrc = (input: string): LyricLine[] => {
   const lines: LyricLine[] = [];
   const lineByTime = new Map<number, LyricLine>();
   const lineOrder = new Map<string, number>();
+  const fullLineFanchants = new Set<string>();
   let lineIndex = 0;
   let lastLyricLine: LyricLine | null = null;
+  let offsetMs = 0;
 
   const rows = input.split(/\r?\n/);
   for (const raw of rows) {
     const trimmed = raw.trim();
     if (!trimmed) continue;
+    const offsetMatch = trimmed.match(offsetTagRegex);
+    if (offsetMatch) {
+      offsetMs = Number(offsetMatch[1] ?? 0);
+      if (Number.isNaN(offsetMs)) offsetMs = 0;
+      continue;
+    }
     if (metaTagRegex.test(trimmed)) continue;
 
     const timeTags = parseTimeTags(trimmed);
     if (timeTags.length === 0) continue;
+    const adjustedTimes = timeTags.map((time) => time + offsetMs);
 
-    const content = trimmed.replace(timeTagRegex, '').trim();
+    const rawContent = trimmed.replace(timeTagRegex, '').trim();
+    if (!rawContent) continue;
+    if (metaLineContentRegex.test(rawContent)) continue;
+    const content = rawContent.replace(inlineMetaTagRegex, '').trim();
     if (!content) continue;
 
     if (content.startsWith('[tt]')) {
@@ -83,7 +106,7 @@ export const parseLrc = (input: string): LyricLine[] => {
       const wordTags = parseWordTags(payload);
       if (wordTags.length === 0) continue;
 
-      for (const startTime of timeTags) {
+      for (const startTime of adjustedTimes) {
         const target = lineByTime.get(startTime) ?? lastLyricLine;
         if (!target) continue;
         target.words = wordTags;
@@ -96,18 +119,22 @@ export const parseLrc = (input: string): LyricLine[] => {
       const fanchant = parseFanchantTag(payload);
       if (!fanchant) continue;
 
-      for (const startTime of timeTags) {
+      for (const startTime of adjustedTimes) {
         const target = lineByTime.get(startTime) ?? lastLyricLine;
         if (!target) continue;
         target.fanchant = {
-          ...fanchant,
-          endTime: target.startTime + fanchant.duration,
+          content: fanchant.content,
+          duration: fanchant.duration,
+          type: fanchant.type,
+          startTime,
+          endTime: startTime + fanchant.duration,
         };
+        if (fanchant.fullLine) fullLineFanchants.add(target.id);
       }
       continue;
     }
 
-    for (const startTime of timeTags) {
+    for (const startTime of adjustedTimes) {
       const order = lineIndex++;
       const id = createId(startTime, order);
       const line: LyricLine = {
@@ -123,9 +150,23 @@ export const parseLrc = (input: string): LyricLine[] => {
     }
   }
 
-  return lines.sort((a, b) => {
+  const sorted = lines.sort((a, b) => {
     const timeDiff = a.startTime - b.startTime;
     if (timeDiff !== 0) return timeDiff;
     return (lineOrder.get(a.id) ?? 0) - (lineOrder.get(b.id) ?? 0);
   });
+  if (fullLineFanchants.size > 0) {
+    sorted.forEach((line, index) => {
+      if (!line.fanchant || !fullLineFanchants.has(line.id)) return;
+      const nextStart = sorted[index + 1]?.startTime ?? line.startTime + 2000;
+      const wordOffset = line.words.reduce((max, word) => Math.max(max, word.offset), -1);
+      const endTime =
+        wordOffset >= 0
+          ? Math.max(line.startTime + wordOffset, line.startTime + 400)
+          : Math.max(nextStart, line.startTime + 400);
+      line.fanchant.duration = Math.max(endTime - line.startTime, 1);
+      line.fanchant.endTime = line.startTime + line.fanchant.duration;
+    });
+  }
+  return sorted;
 };

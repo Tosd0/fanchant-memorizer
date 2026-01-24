@@ -57,13 +57,20 @@ export const SemiCircleMenu = ({ open, prompt, onSelect, onClose }: SemiCircleMe
             <div className="absolute inset-x-0 top-4 text-center text-xs uppercase tracking-[0.3em] text-zinc-400">
               {prompt ?? 'Choose your response'}
             </div>
-            <div className="absolute bottom-4 left-0 right-0 flex items-center justify-between px-6">
+            <div className="absolute bottom-4 left-0 right-0 flex items-center justify-between px-5">
               <button
                 type="button"
                 onClick={() => onSelect('repeat')}
                 className="rounded-full border border-emerald-400/50 bg-emerald-500/15 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-200 transition hover:bg-emerald-500/30"
               >
                 Repeat
+              </button>
+              <button
+                type="button"
+                onClick={() => onSelect('cheer')}
+                className="rounded-full border border-amber-400/60 bg-amber-400/15 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-amber-200 transition hover:bg-amber-400/30"
+              >
+                Cheer
               </button>
               <button
                 type="button"

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObjec
 import type { FanchantType, LyricLine } from '@/lib/lrc/types';
 import { useAudioStore } from '@/stores/audioStore';
 import { useGameStore, type GameMode, type GameResult } from '@/stores/gameStore';
-import { KaraokeLine, type KaraokeLineHandle } from './KaraokeLine';
+import { KaraokeLine, type KaraokeLineHandle, type ReciteProgress } from './KaraokeLine';
 import { SemiCircleMenu } from './SemiCircleMenu';
 
 interface LyricsViewProps {
@@ -12,13 +12,6 @@ interface LyricsViewProps {
   timeRef: MutableRefObject<number>;
   onSeek: (timeMs: number) => void;
   mode: GameMode;
-}
-
-interface FanchantWindow {
-  content: string;
-  type: FanchantType;
-  startTime: number;
-  endTime: number;
 }
 
 interface LineJudgeState {
@@ -41,23 +34,13 @@ const buildLineMeta = (lines: LyricLine[]) => {
   return { startTimes, endTimes };
 };
 
-const buildFanchantWindows = (lines: LyricLine[]) =>
-  lines
-    .filter((line) => line.fanchant)
-    .map((line) => ({
-      content: line.fanchant!.content,
-      type: line.fanchant!.type,
-      startTime: line.startTime,
-      endTime: line.fanchant!.endTime,
-    }))
-    .sort((a, b) => a.startTime - b.startTime);
-
 const buildFanchantIndex = (lines: LyricLine[]) =>
   lines
     .map((line, index) => (line.fanchant ? { line, index } : null))
     .filter((entry): entry is { line: LyricLine; index: number } => Boolean(entry))
     .sort((a, b) => {
-      const timeDiff = a.line.startTime - b.line.startTime;
+      const timeDiff = (a.line.fanchant?.startTime ?? a.line.startTime) -
+        (b.line.fanchant?.startTime ?? b.line.startTime);
       return timeDiff !== 0 ? timeDiff : a.index - b.index;
     });
 
@@ -78,57 +61,43 @@ const findActiveIndex = (startTimes: number[], timeMs: number) => {
   return best;
 };
 
-const resolveFanchant = (windows: FanchantWindow[], timeMs: number) => {
-  if (windows.length === 0) return null;
-  let left = 0;
-  let right = windows.length - 1;
-  let best = -1;
-  while (left <= right) {
-    const mid = Math.floor((left + right) / 2);
-    if (windows[mid].startTime <= timeMs) {
-      best = mid;
-      left = mid + 1;
-    } else {
-      right = mid - 1;
-    }
-  }
-  if (best === -1) return null;
-  const candidate = windows[best];
-  return timeMs <= candidate.endTime ? candidate : null;
-};
-
 export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const lineRefs = useRef<(KaraokeLineHandle | null)[]>([]);
   const activeIndexRef = useRef(0);
-  const fanchantKeyRef = useRef<string | null>(null);
   const pendingIndexRef = useRef(0);
+  const revealedRef = useRef<Set<string>>(new Set());
+  const revealCursorRef = useRef(0);
   const lineResultsRef = useRef<Record<string, LineJudgeState>>({});
   const menuLineRef = useRef<LyricLine | null>(null);
   const wasPlayingRef = useRef(false);
+  const seekSyncTimeout = useRef<number | null>(null);
+  const reciteProgressRef = useRef<Record<string, ReciteProgress>>({});
 
   const audioRef = useAudioStore((state) => state.audioRef);
   const registerResult = useGameStore((state) => state.registerResult);
 
   const [activeIndex, setActiveIndex] = useState(0);
-  const [activeFanchant, setActiveFanchant] = useState<FanchantWindow | null>(null);
   const [lineResults, setLineResults] = useState<Record<string, LineJudgeState>>({});
   const [menuLineId, setMenuLineId] = useState<string | null>(null);
+  const [revealedFanchants, setRevealedFanchants] = useState<Record<string, boolean>>({});
 
   const lineMeta = useMemo(() => buildLineMeta(lines), [lines]);
-  const fanchantWindows = useMemo(() => buildFanchantWindows(lines), [lines]);
   const fanchantIndex = useMemo(() => buildFanchantIndex(lines), [lines]);
 
   useEffect(() => {
     lineRefs.current = Array(lines.length).fill(null);
     activeIndexRef.current = 0;
     pendingIndexRef.current = 0;
+    revealCursorRef.current = 0;
+    revealedRef.current = new Set();
     lineResultsRef.current = {};
+    reciteProgressRef.current = {};
     menuLineRef.current = null;
     setActiveIndex(0);
-    setActiveFanchant(null);
     setLineResults({});
     setMenuLineId(null);
+    setRevealedFanchants({});
   }, [lines, mode]);
 
   const setResult = useCallback(
@@ -143,6 +112,54 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
       }
     },
     [registerResult]
+  );
+
+  const updateRevealedUpTo = useCallback(
+    (timeMs: number, forceReset: boolean) => {
+      if (fanchantIndex.length === 0) return;
+      if (forceReset) {
+        const nextSet = new Set<string>();
+        let cursor = 0;
+        while (cursor < fanchantIndex.length) {
+          const { line } = fanchantIndex[cursor];
+          const revealAt = line.fanchant?.startTime ?? line.startTime;
+          if (revealAt > timeMs) break;
+          nextSet.add(line.id);
+          cursor += 1;
+        }
+        revealedRef.current = nextSet;
+        revealCursorRef.current = cursor;
+        setRevealedFanchants(
+          Array.from(nextSet).reduce<Record<string, boolean>>((acc, id) => {
+            acc[id] = true;
+            return acc;
+          }, {})
+        );
+        return;
+      }
+
+      let cursor = revealCursorRef.current;
+      const added: string[] = [];
+      while (cursor < fanchantIndex.length) {
+        const { line } = fanchantIndex[cursor];
+        const revealAt = line.fanchant?.startTime ?? line.startTime;
+        if (revealAt > timeMs) break;
+        if (!revealedRef.current.has(line.id)) {
+          revealedRef.current.add(line.id);
+          added.push(line.id);
+        }
+        cursor += 1;
+      }
+      revealCursorRef.current = cursor;
+      if (added.length > 0) {
+        setRevealedFanchants((prev) => {
+          const next = { ...prev };
+          for (const id of added) next[id] = true;
+          return next;
+        });
+      }
+    },
+    [fanchantIndex]
   );
 
   const openMenu = useCallback(
@@ -173,6 +190,7 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
     (line: LyricLine) => {
       if (!line.fanchant) return;
       if (mode === 'memory') return;
+      if (mode === 'recite') return;
       if (lineResultsRef.current[line.id]) return;
       if (menuLineRef.current) return;
 
@@ -183,13 +201,35 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
         return;
       }
 
-      if (mode === 'recite') {
-        setResult(line, 'hit');
-      } else if (mode === 'judge') {
+      if (mode === 'judge') {
         openMenu(line);
       }
     },
     [mode, openMenu, setResult, timeRef]
+  );
+
+  const handleReciteProgress = useCallback(
+    (line: LyricLine, progress: ReciteProgress) => {
+      const resolvedProgress =
+        progress.isComplete && progress.completedAt === null
+          ? { ...progress, completedAt: timeRef.current }
+          : progress;
+      reciteProgressRef.current[line.id] = resolvedProgress;
+      if (mode !== 'recite') return;
+      if (lineResultsRef.current[line.id]) return;
+      if (!line.fanchant) {
+        if (resolvedProgress.hasSelection) {
+          setResult(line, 'miss');
+        }
+        return;
+      }
+      if (!resolvedProgress.isComplete) return;
+      const now = timeRef.current;
+      if (now < line.fanchant.startTime) return;
+      if (now > line.fanchant.endTime) return;
+      setResult(line, 'hit');
+    },
+    [mode, setResult, timeRef]
   );
 
   const handleMenuSelect = useCallback(
@@ -220,13 +260,8 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
     [closeMenu, setResult, timeRef]
   );
 
-  useEffect(() => {
-    let rafId = 0;
-    let active = true;
-
-    const tick = () => {
-      if (!active) return;
-      const timeMs = timeRef.current;
+  const syncForTime = useCallback(
+    (timeMs: number, shouldScroll: boolean, forceRevealReset = false) => {
       if (lines.length > 0) {
         const nextIndex = findActiveIndex(lineMeta.startTimes, timeMs);
         if (nextIndex !== activeIndexRef.current && nextIndex >= 0) {
@@ -236,26 +271,18 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
           lineRefs.current[previousIndex]?.update(timeMs);
           lineRefs.current[nextIndex]?.update(timeMs);
 
-          const target = containerRef.current?.querySelector<HTMLElement>(
-            `[data-line-index="${nextIndex}"]`
-          );
-          target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          if (shouldScroll) {
+            const target = containerRef.current?.querySelector<HTMLElement>(
+              `[data-line-index="${nextIndex}"]`
+            );
+            target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          }
         } else if (nextIndex >= 0) {
           lineRefs.current[nextIndex]?.update(timeMs);
         }
       }
 
-      if (fanchantWindows.length > 0) {
-        const fanchant = resolveFanchant(fanchantWindows, timeMs);
-        const nextKey = fanchant ? `${fanchant.content}-${fanchant.type}` : null;
-        if (nextKey !== fanchantKeyRef.current) {
-          fanchantKeyRef.current = nextKey;
-          setActiveFanchant(fanchant);
-        }
-      } else if (fanchantKeyRef.current !== null) {
-        fanchantKeyRef.current = null;
-        setActiveFanchant(null);
-      }
+      updateRevealedUpTo(timeMs, forceRevealReset);
 
       if (mode !== 'memory' && fanchantIndex.length > 0) {
         let cursor = pendingIndexRef.current;
@@ -265,8 +292,34 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
             cursor += 1;
             continue;
           }
+          if (mode === 'recite') {
+            const progress = reciteProgressRef.current[line.id];
+            if (
+              progress?.isComplete &&
+              timeMs >= line.fanchant!.startTime &&
+              timeMs <= line.fanchant!.endTime
+            ) {
+              setResult(line, 'hit');
+              cursor += 1;
+              continue;
+            }
+          }
           if (timeMs > line.fanchant!.endTime) {
-            setResult(line, 'miss');
+            if (mode === 'recite') {
+              const progress = reciteProgressRef.current[line.id];
+              const completedAt = progress?.completedAt;
+              const isCompletionValid =
+                Boolean(progress?.isComplete) &&
+                typeof completedAt === 'number' &&
+                completedAt <= line.fanchant!.endTime;
+              if (isCompletionValid) {
+                setResult(line, 'hit');
+              } else {
+                setResult(line, 'miss');
+              }
+            } else {
+              setResult(line, 'miss');
+            }
             cursor += 1;
             continue;
           }
@@ -275,6 +328,18 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
         }
         pendingIndexRef.current = cursor;
       }
+    },
+    [fanchantIndex, lineMeta.startTimes, lines.length, mode, setResult, updateRevealedUpTo]
+  );
+
+  useEffect(() => {
+    let rafId = 0;
+    let active = true;
+
+    const tick = () => {
+      if (!active) return;
+      const timeMs = timeRef.current;
+      syncForTime(timeMs, true);
 
       rafId = requestAnimationFrame(tick);
     };
@@ -284,35 +349,41 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
       active = false;
       cancelAnimationFrame(rafId);
     };
-  }, [fanchantIndex, fanchantWindows, lineMeta.startTimes, lines.length, mode, setResult, timeRef]);
+  }, [syncForTime, timeRef]);
 
-  const overlayText = activeFanchant
-    ? mode === 'memory'
-      ? activeFanchant.content
-      : mode === 'recite'
-        ? 'TAP TO CHANT'
-        : 'CHOOSE RESPONSE'
-    : 'FANCHANT READY';
+  useEffect(() => {
+    if (!audioRef) return;
+    const handleSeeked = () => {
+      if (seekSyncTimeout.current) {
+        window.clearTimeout(seekSyncTimeout.current);
+      }
+      seekSyncTimeout.current = window.setTimeout(() => {
+        syncForTime(timeRef.current, false, true);
+      }, 500);
+    };
+    audioRef.addEventListener('seeked', handleSeeked);
+    return () => {
+      if (seekSyncTimeout.current) {
+        window.clearTimeout(seekSyncTimeout.current);
+      }
+      audioRef.removeEventListener('seeked', handleSeeked);
+    };
+  }, [audioRef, syncForTime, timeRef]);
 
   return (
     <div className="relative flex h-full flex-col">
-      <div ref={containerRef} className="flex-1 overflow-y-auto px-4 py-10">
+      <div ref={containerRef} className="flex-1 overflow-y-auto px-6 py-10">
         {lines.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-sm text-zinc-500">
+          <div className="flex h-full items-center justify-center text-sm text-slate-400">
             Paste LRC and press Parse to see karaoke lines.
           </div>
         ) : (
-          <div className="flex flex-col gap-3 pb-20">
+          <div className="flex flex-col gap-4 pb-16">
             {lines.map((line, index) => {
               const lineState = lineResults[line.id];
-              const canInteract = mode !== 'memory' && Boolean(line.fanchant);
-              const hintLabel =
-                line.fanchant && !lineState && mode !== 'memory'
-                  ? mode === 'judge'
-                    ? 'CHOOSE'
-                    : 'TAP'
-                  : null;
+              const canInteract = mode === 'judge' && Boolean(line.fanchant);
               const revealAnswer = mode !== 'memory' && Boolean(lineState);
+              const showFanchant = mode === 'recite' ? false : Boolean(revealedFanchants[line.id]);
 
               return (
                 <KaraokeLine
@@ -322,14 +393,17 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
                   }}
                   line={line}
                   lineIndex={index}
+                  mode={mode}
                   isActive={index === activeIndex}
                   endTime={lineMeta.endTimes[index] ?? line.startTime + 1500}
                   onSeek={onSeek}
                   canInteract={canInteract}
                   onInteract={handleLineInteract}
+                  onReciteProgress={handleReciteProgress}
+                  timeRef={timeRef}
                   result={lineState?.result ?? null}
-                  hintLabel={hintLabel}
                   revealAnswer={revealAnswer}
+                  showFanchant={showFanchant}
                 />
               );
             })}
@@ -337,19 +411,9 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
         )}
       </div>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-6 flex justify-center">
-        <div
-          className={`rounded-full border border-emerald-400/40 bg-emerald-500/10 px-4 py-2 text-sm font-semibold tracking-wide text-emerald-200 shadow-[0_0_30px_rgba(16,185,129,0.35)] transition ${
-            activeFanchant ? 'opacity-100' : 'opacity-0'
-          }`}
-        >
-          {overlayText}
-        </div>
-      </div>
-
       <SemiCircleMenu
         open={mode === 'judge' && Boolean(menuLineId)}
-        prompt="Repeat or Diff?"
+        prompt="Repeat / Diff / Cheer?"
         onSelect={handleMenuSelect}
         onClose={() => closeMenu(true)}
       />

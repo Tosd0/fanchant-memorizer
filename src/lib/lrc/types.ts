@@ -1,4 +1,4 @@
-export type FanchantType = 'repeat' | 'diff';
+export type FanchantType = 'repeat' | 'diff' | 'cheer';
 
 export interface WordTag {
   charIndex: number; // grapheme index in text
@@ -9,6 +9,7 @@ export interface FanchantTag {
   content: string;
   duration: number;
   type: FanchantType;
+  startTime: number;
   endTime: number; // startTime + duration
 }
 
