@@ -19,6 +19,7 @@ import type { GameMode, GameResult } from '@/stores/gameStore';
 export interface KaraokeLineHandle {
   update: (timeMs: number) => void;
   reset: () => void;
+  applyPressInterval: (startAbs: number, endAbs: number, finalize?: boolean) => void;
 }
 
 export interface ReciteProgress {
@@ -30,6 +31,8 @@ export interface ReciteProgress {
   isComplete: boolean;
   hasSelection: boolean;
   completedAt: number | null;
+  timingStatus?: 'pending' | 'ok' | 'miss' | null;
+  timingWindow?: { start: number; end: number } | null;
 }
 
 interface KaraokeLineProps {
@@ -42,6 +45,7 @@ interface KaraokeLineProps {
   canInteract?: boolean;
   onInteract?: (line: LyricLine) => void;
   onReciteProgress?: (line: LyricLine, progress: ReciteProgress) => void;
+  onReciteCheerMark?: (line: LyricLine) => void;
   timeRef?: MutableRefObject<number>;
   result?: GameResult | null;
   revealAnswer?: boolean;
@@ -53,6 +57,8 @@ interface WordUnit {
   start: number;
   end: number;
 }
+
+const RECITE_TOLERANCE_MS = 140;
 
 const splitGraphemes = (text: string) => {
   if (typeof Intl !== 'undefined' && 'Segmenter' in Intl) {
@@ -167,6 +173,7 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
       canInteract,
       onInteract,
       onReciteProgress,
+      onReciteCheerMark,
       timeRef,
       result,
       revealAnswer,
@@ -184,7 +191,12 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
     const [selectedUnits, setSelectedUnits] = useState<boolean[]>(() =>
       Array(units.length).fill(false)
     );
+    const [selectionSource, setSelectionSource] = useState<'manual' | 'press' | null>(null);
+    const [pressTimingStatus, setPressTimingStatus] = useState<'pending' | 'ok' | 'miss' | null>(
+      null
+    );
     const completedAtRef = useRef<number | null>(null);
+    const pressCompletedAtRef = useRef<number | null>(null);
     const selectingRef = useRef(false);
 
     const textRef = useRef<HTMLDivElement>(null);
@@ -247,24 +259,56 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
       [requiredMask, selectedUnits]
     );
     const hasSelection = selectedCount > 0;
-    const isComplete = totalRequired > 0 && selectedRequired === totalRequired && selectedExtra === 0;
+    const isPressSelection = selectionSource === 'press';
+    const isComplete =
+      totalRequired > 0 &&
+      selectedRequired === totalRequired &&
+      (isPressSelection ? true : selectedExtra === 0);
+
+    const requiredWindow = useMemo(() => {
+      if (totalRequired === 0) return null;
+      let minStart = Number.POSITIVE_INFINITY;
+      let maxEnd = Number.NEGATIVE_INFINITY;
+      requiredMask.forEach((required, index) => {
+        if (!required) return;
+        const start = startOffsets[index] ?? 0;
+        const end = endOffsets[index] ?? start;
+        minStart = Math.min(minStart, start);
+        maxEnd = Math.max(maxEnd, end);
+      });
+      if (!Number.isFinite(minStart) || !Number.isFinite(maxEnd)) return null;
+      return { start: minStart, end: maxEnd };
+    }, [endOffsets, requiredMask, startOffsets, totalRequired]);
 
     useEffect(() => {
       setSelectedUnits(Array(units.length).fill(false));
+      setSelectionSource(null);
+      setPressTimingStatus(null);
+      pressCompletedAtRef.current = null;
       completedAtRef.current = null;
     }, [line.id, mode, units.length]);
 
     useEffect(() => {
-      if (!isComplete) {
+      if (!isComplete || pressTimingStatus === 'pending' || pressTimingStatus === 'miss') {
         completedAtRef.current = null;
         return;
       }
       if (completedAtRef.current !== null) return;
-      completedAtRef.current = timeRef?.current ?? null;
-    }, [isComplete, timeRef]);
+      completedAtRef.current = isPressSelection
+        ? pressCompletedAtRef.current ?? null
+        : timeRef?.current ?? null;
+    }, [isComplete, isPressSelection, pressTimingStatus, timeRef]);
 
     useEffect(() => {
       if (!onReciteProgress || mode !== 'recite') return;
+      const timingStatus = isPressSelection ? pressTimingStatus : null;
+      const timingWindow =
+        isPressSelection && requiredWindow
+          ? {
+              start: line.startTime + requiredWindow.start - RECITE_TOLERANCE_MS,
+              end: line.startTime + requiredWindow.end + RECITE_TOLERANCE_MS,
+            }
+          : null;
       onReciteProgress(line, {
         totalUnits,
         selectedUnits: selectedCount,
@@ -274,6 +318,8 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
         isComplete,
         hasSelection,
         completedAt: completedAtRef.current,
+        timingStatus,
+        timingWindow,
       });
     }, [
       hasSelection,
@@ -281,9 +327,12 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
       line,
       mode,
       onReciteProgress,
+      pressTimingStatus,
+      requiredWindow,
       selectedCount,
       selectedExtra,
       selectedRequired,
+      isPressSelection,
       totalRequired,
       totalUnits,
     ]);
@@ -408,16 +457,67 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
       [computeWidthForOffset, endTime, graphemes.length, line.fanchant, line.startTime, measure, positionFanchant, setWidth, units.length]
     );
 
+    const canSelect = mode === 'recite' && !result;
+    const showReciteActions = mode === 'recite' && isActive;
+    const actionsLocked = Boolean(result);
+
     useImperativeHandle(
       ref,
       () => ({
         update,
+        applyPressInterval: (startAbs: number, endAbs: number, finalize = true) => {
+          if (!canSelect || totalUnits === 0) return;
+          const relStartRaw = Math.min(startAbs, endAbs) - line.startTime;
+          const relEndRaw = Math.max(startAbs, endAbs) - line.startTime;
+          const relStart = Math.max(relStartRaw, 0);
+          const relEnd = Math.min(relEndRaw, relativeEndTime);
+          if (relEnd <= 0 || relStart >= relativeEndTime) {
+            setSelectionSource('press');
+            setSelectedUnits(Array(totalUnits).fill(false));
+            setPressTimingStatus(finalize ? null : 'pending');
+            pressCompletedAtRef.current = null;
+            return;
+          }
+          setSelectionSource('press');
+          const nextSelected = startOffsets.map((start, index) => {
+            const end = endOffsets[index] ?? start;
+            return end > relStart && start < relEnd;
+          });
+          setSelectedUnits(nextSelected);
+          if (!requiredWindow) {
+            setPressTimingStatus(finalize ? null : 'pending');
+            pressCompletedAtRef.current = null;
+            return;
+          }
+          if (!finalize) {
+            setPressTimingStatus('pending');
+            pressCompletedAtRef.current = null;
+            return;
+          }
+          const allowedStart = requiredWindow.start - RECITE_TOLERANCE_MS;
+          const allowedEnd = requiredWindow.end + RECITE_TOLERANCE_MS;
+          const timingStatus =
+            relStart < allowedStart || relEnd > allowedEnd ? 'miss' : 'ok';
+          pressCompletedAtRef.current =
+            timingStatus === 'ok' ? line.startTime + relEnd : null;
+          setPressTimingStatus(timingStatus);
+        },
         reset: () => {
           setWidth(0, metricsRef.current.textLeft);
           if (underlineRef.current) underlineRef.current.style.backgroundColor = '';
         },
       }),
-      [setWidth, update]
+      [
+        canSelect,
+        endOffsets,
+        line.startTime,
+        relativeEndTime,
+        requiredWindow,
+        setWidth,
+        startOffsets,
+        totalUnits,
+        update,
+      ]
     );
 
     const wrapperClass = isActive
@@ -447,8 +547,6 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
       onSeek(line.startTime);
     }, [canInteract, line, mode, onInteract, onSeek]);
 
-    const canSelect = mode === 'recite' && !result;
-
     const selectUnit = useCallback((index: number) => {
       setSelectedUnits((prev) => {
         if (prev[index]) return prev;
@@ -463,6 +561,9 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
         if (!canSelect) return;
         event.preventDefault();
         event.stopPropagation();
+        setSelectionSource('manual');
+        setPressTimingStatus(null);
+        pressCompletedAtRef.current = null;
         selectingRef.current = true;
         selectUnit(index);
       },
@@ -487,6 +588,7 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
         if (!hit) return;
         const nextIndex = Number(hit.dataset.wordIndex);
         if (Number.isNaN(nextIndex) || nextIndex < 0 || nextIndex >= totalUnits) return;
+        setSelectionSource('manual');
         selectUnit(nextIndex);
       },
       [canSelect, selectUnit, totalUnits]
@@ -508,6 +610,33 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
       };
     }, [canSelect]);
 
+    const handleSelectAll = useCallback(
+      (event: ReactMouseEvent<HTMLButtonElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!canSelect || totalUnits === 0) return;
+        setSelectionSource('manual');
+        setPressTimingStatus(null);
+        pressCompletedAtRef.current = null;
+        setSelectedUnits((prev) => {
+          if (prev.length === 0) return prev;
+          if (prev.every(Boolean)) return prev;
+          return Array(totalUnits).fill(true);
+        });
+      },
+      [canSelect, totalUnits]
+    );
+
+    const handleCheerMark = useCallback(
+      (event: ReactMouseEvent<HTMLButtonElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!showReciteActions || actionsLocked) return;
+        onReciteCheerMark?.(line);
+      },
+      [actionsLocked, line, onReciteCheerMark, showReciteActions]
+    );
+
     const showFanchantText =
       mode === 'recite'
         ? hasSelection || Boolean(result)
@@ -523,18 +652,50 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
 
     const fanchantText = isCheer ? '[CHEER/欢呼]' : line.fanchant?.content ?? '';
 
+    const paddingClass = showReciteActions ? 'px-12' : 'px-6';
+
     return (
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         aria-current={isActive}
         data-line-index={lineIndex}
         onClick={handleClick}
-        className={`relative w-full rounded-2xl px-6 py-5 text-center transition ${wrapperClass} ${resultClass}`}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          handleClick();
+        }}
+        className={`relative isolate w-full overflow-visible rounded-2xl ${paddingClass} py-5 text-center transition ${wrapperClass} ${resultClass}`}
       >
+        {showReciteActions ? (
+          <>
+            <button
+              type="button"
+              aria-label="Mark cheer on this line"
+              onClick={handleCheerMark}
+              disabled={actionsLocked}
+              style={{ zIndex: 20 }}
+              className="absolute left-4 top-1/2 -translate-y-1/2 rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              CHEER
+            </button>
+            <button
+              type="button"
+              aria-label="Select entire line"
+              onClick={handleSelectAll}
+              disabled={!canSelect || totalUnits === 0}
+              style={{ zIndex: 20 }}
+              className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              全选
+            </button>
+          </>
+        ) : null}
         {canInteract ? (
           <span aria-hidden="true" className="absolute inset-0 cursor-pointer" onClick={handleInteract} />
         ) : null}
-        <div ref={bodyRef} className="relative w-full">
+        <div ref={bodyRef} className="relative z-0 w-full">
           <div
             ref={textRef}
             onPointerMove={handlePointerMove}
@@ -567,6 +728,7 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
           <div className="relative mx-auto mt-4 h-6 w-full">
             <div
               ref={fanchantRef}
+              style={isCheer ? { color: '#facc15' } : undefined}
               className={`absolute left-0 text-lg font-semibold uppercase tracking-[0.3em] ${
                 fanchantClass
               } ${showFanchantText ? 'opacity-100' : 'opacity-0'}`}
@@ -576,7 +738,7 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
           </div>
         </div>
         {result === 'hit' ? <span aria-hidden="true" className="line-spark" /> : null}
-      </button>
+      </div>
     );
   }
 );

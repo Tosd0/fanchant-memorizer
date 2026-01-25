@@ -1,6 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import type { FanchantType, LyricLine } from '@/lib/lrc/types';
 import { useAudioStore } from '@/stores/audioStore';
 import { useGameStore, type GameMode, type GameResult } from '@/stores/gameStore';
@@ -18,6 +26,8 @@ interface LineJudgeState {
   result: GameResult;
   selectedType?: FanchantType;
 }
+
+const RECITE_BALL_RADIUS = 192;
 
 const buildLineMeta = (lines: LyricLine[]) => {
   const startTimes = lines.map((line) => line.startTime);
@@ -73,6 +83,10 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
   const wasPlayingRef = useRef(false);
   const seekSyncTimeout = useRef<number | null>(null);
   const reciteProgressRef = useRef<Record<string, ReciteProgress>>({});
+  const recitePressStartRef = useRef<number | null>(null);
+  const dragStartYRef = useRef(0);
+  const dragStartCenterYRef = useRef(0);
+  const draggingRef = useRef(false);
 
   const audioRef = useAudioStore((state) => state.audioRef);
   const registerResult = useGameStore((state) => state.registerResult);
@@ -81,6 +95,9 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
   const [lineResults, setLineResults] = useState<Record<string, LineJudgeState>>({});
   const [menuLineId, setMenuLineId] = useState<string | null>(null);
   const [revealedFanchants, setRevealedFanchants] = useState<Record<string, boolean>>({});
+  const [isRecitePressing, setIsRecitePressing] = useState(false);
+  const [ballCenterY, setBallCenterY] = useState<number | null>(null);
+  const [dragPointerId, setDragPointerId] = useState<number | null>(null);
 
   const lineMeta = useMemo(() => buildLineMeta(lines), [lines]);
   const fanchantIndex = useMemo(() => buildFanchantIndex(lines), [lines]);
@@ -94,11 +111,32 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
     lineResultsRef.current = {};
     reciteProgressRef.current = {};
     menuLineRef.current = null;
+    recitePressStartRef.current = null;
+    draggingRef.current = false;
+    setIsRecitePressing(false);
+    setDragPointerId(null);
     setActiveIndex(0);
     setLineResults({});
     setMenuLineId(null);
     setRevealedFanchants({});
   }, [lines, mode]);
+
+  const clampBallCenterY = useCallback((value: number) => {
+    if (typeof window === 'undefined') return value;
+    const min = RECITE_BALL_RADIUS;
+    const max = window.innerHeight;
+    return Math.min(Math.max(value, min), max);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const updateCenter = () => {
+      setBallCenterY((prev) => clampBallCenterY(prev ?? window.innerHeight));
+    };
+    updateCenter();
+    window.addEventListener('resize', updateCenter);
+    return () => window.removeEventListener('resize', updateCenter);
+  }, [clampBallCenterY]);
 
   const setResult = useCallback(
     (line: LyricLine, result: GameResult, selectedType?: FanchantType) => {
@@ -211,12 +249,20 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
   const handleReciteProgress = useCallback(
     (line: LyricLine, progress: ReciteProgress) => {
       const resolvedProgress =
-        progress.isComplete && progress.completedAt === null
+        progress.isComplete &&
+        progress.completedAt === null &&
+        progress.timingStatus !== 'pending' &&
+        progress.timingStatus !== 'miss'
           ? { ...progress, completedAt: timeRef.current }
           : progress;
       reciteProgressRef.current[line.id] = resolvedProgress;
       if (mode !== 'recite') return;
       if (lineResultsRef.current[line.id]) return;
+      if (resolvedProgress.timingStatus === 'miss') {
+        setResult(line, 'miss');
+        return;
+      }
+      if (resolvedProgress.timingStatus === 'pending') return;
       if (!line.fanchant) {
         if (resolvedProgress.hasSelection) {
           setResult(line, 'miss');
@@ -231,6 +277,108 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
     },
     [mode, setResult, timeRef]
   );
+
+  const handleReciteCheerMark = useCallback(
+    (line: LyricLine) => {
+      if (mode !== 'recite') return;
+      if (lineResultsRef.current[line.id]) return;
+      const isCheer = line.fanchant?.type === 'cheer';
+      setResult(line, isCheer ? 'hit' : 'miss');
+    },
+    [mode, setResult]
+  );
+
+  const handleRecitePressStart = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (mode !== 'recite') return;
+      event.preventDefault();
+      event.stopPropagation();
+      setIsRecitePressing(true);
+      recitePressStartRef.current = timeRef.current;
+      const isPlaying = audioRef ? !audioRef.paused : false;
+      if (isPlaying) return;
+      dragStartYRef.current = event.clientY;
+      dragStartCenterYRef.current =
+        ballCenterY ?? (typeof window !== 'undefined' ? window.innerHeight : RECITE_BALL_RADIUS);
+      draggingRef.current = false;
+      setDragPointerId(event.pointerId);
+    },
+    [audioRef, ballCenterY, mode, timeRef]
+  );
+
+  const applyRecitePressInterval = useCallback(
+    (startAbs: number, endAbs: number, finalize: boolean) => {
+      lineRefs.current.forEach((lineRef) => {
+        lineRef?.applyPressInterval?.(startAbs, endAbs, finalize);
+      });
+    },
+    []
+  );
+
+  const finalizeRecitePress = useCallback(() => {
+    if (!isRecitePressing) return;
+    setIsRecitePressing(false);
+    const startAbs = recitePressStartRef.current;
+    const endAbs = timeRef.current;
+    recitePressStartRef.current = null;
+    if (startAbs === null || Number.isNaN(startAbs)) return;
+    applyRecitePressInterval(startAbs, endAbs, true);
+  }, [applyRecitePressInterval, isRecitePressing, timeRef]);
+
+  useEffect(() => {
+    if (!isRecitePressing) return;
+    const handlePointerUp = () => finalizeRecitePress();
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+    };
+  }, [finalizeRecitePress, isRecitePressing]);
+
+  useEffect(() => {
+    if (!isRecitePressing) return;
+    let rafId = 0;
+    const tick = () => {
+      if (!isRecitePressing) return;
+      const startAbs = recitePressStartRef.current;
+      if (startAbs !== null) {
+        applyRecitePressInterval(startAbs, timeRef.current, false);
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [applyRecitePressInterval, isRecitePressing, timeRef]);
+
+  useEffect(() => {
+    if (dragPointerId === null) return;
+    const handleMove = (event: PointerEvent) => {
+      if (event.pointerId !== dragPointerId) return;
+      const deltaY = event.clientY - dragStartYRef.current;
+      if (!draggingRef.current && Math.abs(deltaY) > 6) {
+        draggingRef.current = true;
+        setIsRecitePressing(false);
+        recitePressStartRef.current = null;
+      }
+      if (!draggingRef.current) return;
+      const nextCenter = clampBallCenterY(dragStartCenterYRef.current + deltaY);
+      setBallCenterY(nextCenter);
+    };
+    const handleUp = (event: PointerEvent) => {
+      if (event.pointerId !== dragPointerId) return;
+      draggingRef.current = false;
+      setDragPointerId(null);
+    };
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+    window.addEventListener('pointercancel', handleUp);
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleUp);
+    };
+  }, [clampBallCenterY, dragPointerId]);
 
   const handleMenuSelect = useCallback(
     (choice: FanchantType) => {
@@ -294,6 +442,15 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
           }
           if (mode === 'recite') {
             const progress = reciteProgressRef.current[line.id];
+            const timingStatus = progress?.timingStatus;
+            if (timingStatus === 'miss') {
+              setResult(line, 'miss');
+              cursor += 1;
+              continue;
+            }
+            if (timingStatus === 'pending') {
+              break;
+            }
             if (
               progress?.isComplete &&
               timeMs >= line.fanchant!.startTime &&
@@ -307,11 +464,15 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
           if (timeMs > line.fanchant!.endTime) {
             if (mode === 'recite') {
               const progress = reciteProgressRef.current[line.id];
+              const timingStatus = progress?.timingStatus;
               const completedAt = progress?.completedAt;
+              const allowedEnd = progress?.timingWindow?.end ?? line.fanchant!.endTime;
               const isCompletionValid =
                 Boolean(progress?.isComplete) &&
                 typeof completedAt === 'number' &&
-                completedAt <= line.fanchant!.endTime;
+                completedAt <= allowedEnd &&
+                timingStatus !== 'miss' &&
+                timingStatus !== 'pending';
               if (isCompletionValid) {
                 setResult(line, 'hit');
               } else {
@@ -400,6 +561,7 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
                   canInteract={canInteract}
                   onInteract={handleLineInteract}
                   onReciteProgress={handleReciteProgress}
+                  onReciteCheerMark={handleReciteCheerMark}
                   timeRef={timeRef}
                   result={lineState?.result ?? null}
                   revealAnswer={revealAnswer}
@@ -417,6 +579,26 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
         onSelect={handleMenuSelect}
         onClose={() => closeMenu(true)}
       />
+
+      {mode === 'recite' ? (
+        <button
+          type="button"
+          aria-label="Hold to select words across lines"
+          aria-pressed={isRecitePressing}
+          onPointerDown={handleRecitePressStart}
+          className={`fixed right-0 z-50 rounded-full border shadow-lg transition touch-none ${
+            isRecitePressing
+              ? 'border-emerald-400 bg-emerald-300 text-emerald-900'
+              : 'border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+          }`}
+          style={{
+            top: ballCenterY ?? '100%',
+            transform: 'translate(50%, -50%)',
+            width: RECITE_BALL_RADIUS * 2,
+            height: RECITE_BALL_RADIUS * 2,
+          }}
+        />
+      ) : null}
     </div>
   );
 };
