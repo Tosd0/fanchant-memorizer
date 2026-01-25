@@ -198,6 +198,9 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
     const completedAtRef = useRef<number | null>(null);
     const pressCompletedAtRef = useRef<number | null>(null);
     const selectingRef = useRef(false);
+    const pressSelectingRef = useRef(false);
+    const pressBaseSelectionRef = useRef<boolean[]>([]);
+    const selectedUnitsRef = useRef<boolean[]>([]);
 
     const textRef = useRef<HTMLDivElement>(null);
     const bodyRef = useRef<HTMLDivElement>(null);
@@ -285,8 +288,14 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
       setSelectionSource(null);
       setPressTimingStatus(null);
       pressCompletedAtRef.current = null;
+      pressSelectingRef.current = false;
+      pressBaseSelectionRef.current = [];
       completedAtRef.current = null;
     }, [line.id, mode, units.length]);
+
+    useEffect(() => {
+      selectedUnitsRef.current = selectedUnits;
+    }, [selectedUnits]);
 
     useEffect(() => {
       if (!isComplete || pressTimingStatus === 'pending' || pressTimingStatus === 'miss') {
@@ -471,11 +480,16 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
           const relEndRaw = Math.max(startAbs, endAbs) - line.startTime;
           const relStart = Math.max(relStartRaw, 0);
           const relEnd = Math.min(relEndRaw, relativeEndTime);
+          if (!finalize && !pressSelectingRef.current) {
+            pressSelectingRef.current = true;
+            pressBaseSelectionRef.current = selectedUnitsRef.current;
+          }
           if (relEnd <= 0 || relStart >= relativeEndTime) {
             setSelectionSource('press');
-            setSelectedUnits(Array(totalUnits).fill(false));
+            setSelectedUnits(pressBaseSelectionRef.current ?? selectedUnitsRef.current);
             setPressTimingStatus(finalize ? null : 'pending');
             pressCompletedAtRef.current = null;
+            if (finalize) pressSelectingRef.current = false;
             return;
           }
           setSelectionSource('press');
@@ -483,10 +497,13 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
             const end = endOffsets[index] ?? start;
             return end > relStart && start < relEnd;
           });
-          setSelectedUnits(nextSelected);
+          const baseSelection = pressBaseSelectionRef.current ?? selectedUnitsRef.current;
+          const mergedSelection = nextSelected.map((value, index) => value || baseSelection[index]);
+          setSelectedUnits(mergedSelection);
           if (!requiredWindow) {
             setPressTimingStatus(finalize ? null : 'pending');
             pressCompletedAtRef.current = null;
+            if (finalize) pressSelectingRef.current = false;
             return;
           }
           if (!finalize) {
@@ -501,6 +518,7 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
           pressCompletedAtRef.current =
             timingStatus === 'ok' ? line.startTime + relEnd : null;
           setPressTimingStatus(timingStatus);
+          pressSelectingRef.current = false;
         },
         reset: () => {
           setWidth(0, metricsRef.current.textLeft);
