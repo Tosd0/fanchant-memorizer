@@ -557,7 +557,7 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
 
     const wrapperClass = isActive
       ? 'bg-[color:var(--lyric-bg)] text-[color:var(--text-primary)]'
-      : 'text-[color:var(--text-soft)] hover:bg-[color:var(--lyric-bg-hover)]';
+      : 'text-[color:var(--text-soft)] hover:text-[color:var(--text-primary)]';
     const resultClass =
       result === 'hit'
         ? 'line-hit ring-1 ring-emerald-400/60'
