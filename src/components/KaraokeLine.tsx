@@ -738,7 +738,7 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
                   canSelect ? 'cursor-pointer select-none' : ''
                 } ${
                   selectedUnits[index]
-                    ? 'border-[color:var(--lyric-word-selected-border)] bg-[color:var(--lyric-word-selected-bg)] text-[color:var(--lyric-word-selected-text)]'
+                    ? 'border-[color:var(--lyric-word-selected-border)] bg-[color:var(--lyric-word-selected-bg)] text-[color:var(--lyric-word-selected-text)] shadow-[0_0_0_2px_var(--lyric-word-selected-ring)]'
                     : 'border-[color:var(--lyric-word-border)] bg-[color:var(--lyric-word-bg)]'
                 }`}
               >

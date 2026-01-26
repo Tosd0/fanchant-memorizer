@@ -319,7 +319,7 @@ export default function Home() {
             </div>
 
             <div className="glass-panel animate-fade-up rounded-3xl p-5" style={{ animationDelay: '180ms' }}>
-              <h3 className="text-sm font-semibold text-[color:var(--text-primary)]">本场提示</h3>
+              <h3 className="text-sm font-semibold text-[color:var(--text-primary)]">提示</h3>
               <ul className="mt-3 space-y-2 text-xs text-[color:var(--text-muted)]">
                 <li>记忆模式：听到时间点时点击对应行。</li>
                 <li>跟唱模式：长按拖拽选中应援词。</li>
@@ -330,7 +330,7 @@ export default function Home() {
 
           <div className="glass-panel animate-fade-up flex min-h-[70vh] flex-col rounded-[32px]">
             <div className="flex items-center justify-between border-b border-[color:var(--panel-border)] px-6 py-4">
-              <h2 className="text-sm font-semibold text-[color:var(--text-primary)]">舞台视图</h2>
+              <h2 className="text-sm font-semibold text-[color:var(--text-primary)]">歌词</h2>
               <span className="text-xs text-[color:var(--text-soft)]">
                 {mode === 'memory'
                   ? '点击歌词定位节奏'
