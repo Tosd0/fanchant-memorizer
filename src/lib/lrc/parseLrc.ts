@@ -50,7 +50,7 @@ const parseWordTags = (payload: string): WordTag[] => {
   return tags;
 };
 
-type ParsedFanchant = Omit<FanchantTag, 'endTime'> & { fullLine: boolean };
+type ParsedFanchant = Omit<FanchantTag, 'endTime' | 'fullLine'> & { autoDuration: boolean };
 
 const parseFanchantTag = (payload: string): ParsedFanchant | null => {
   const match = payload.match(/<\s*([^>]*)\s*>/);
@@ -66,7 +66,7 @@ const parseFanchantTag = (payload: string): ParsedFanchant | null => {
     content,
     duration: durationText.length > 0 ? Number(durationText) : 0,
     type: type as FanchantType,
-    fullLine: durationText.length === 0,
+    autoDuration: durationText.length === 0,
   };
 };
 
@@ -74,7 +74,7 @@ export const parseLrc = (input: string): LyricLine[] => {
   const lines: LyricLine[] = [];
   const lineByTime = new Map<number, LyricLine>();
   const lineOrder = new Map<string, number>();
-  const fullLineFanchants = new Set<string>();
+  const autoDurationFanchants: Array<{ id: string; startTime: number }> = [];
   let lineIndex = 0;
   let lastLyricLine: LyricLine | null = null;
   let offsetMs = 0;
@@ -128,8 +128,11 @@ export const parseLrc = (input: string): LyricLine[] => {
           type: fanchant.type,
           startTime,
           endTime: startTime + fanchant.duration,
+          fullLine: false,
         };
-        if (fanchant.fullLine) fullLineFanchants.add(target.id);
+        if (fanchant.autoDuration) {
+          autoDurationFanchants.push({ id: target.id, startTime });
+        }
       }
       continue;
     }
@@ -155,17 +158,24 @@ export const parseLrc = (input: string): LyricLine[] => {
     if (timeDiff !== 0) return timeDiff;
     return (lineOrder.get(a.id) ?? 0) - (lineOrder.get(b.id) ?? 0);
   });
-  if (fullLineFanchants.size > 0) {
+  if (autoDurationFanchants.length > 0) {
+    const autoById = new Map<string, number>();
+    autoDurationFanchants.forEach(({ id, startTime }) => {
+      autoById.set(id, startTime);
+    });
     sorted.forEach((line, index) => {
-      if (!line.fanchant || !fullLineFanchants.has(line.id)) return;
+      const startTime = autoById.get(line.id);
+      if (!line.fanchant || startTime === undefined) return;
       const nextStart = sorted[index + 1]?.startTime ?? line.startTime + 2000;
       const wordOffset = line.words.reduce((max, word) => Math.max(max, word.offset), -1);
-      const endTime =
+      const lineEnd =
         wordOffset >= 0
           ? Math.max(line.startTime + wordOffset, line.startTime + 400)
           : Math.max(nextStart, line.startTime + 400);
-      line.fanchant.duration = Math.max(endTime - line.startTime, 1);
-      line.fanchant.endTime = line.startTime + line.fanchant.duration;
+      const duration = Math.max(lineEnd - startTime, 1);
+      line.fanchant.duration = duration;
+      line.fanchant.endTime = startTime + duration;
+      line.fanchant.fullLine = startTime === line.startTime;
     });
   }
   return sorted;

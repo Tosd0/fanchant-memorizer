@@ -1,28 +1,100 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --ink-950: #0c1022;
+  --ink-800: #1a2138;
+  --ink-600: #3a4766;
+  --mist-50: #f7f4ee;
+  --mist-100: #f0ede6;
+  --mist-200: #e6e2d9;
+  --sunset-500: #ff6b4a;
+  --teal-500: #27b1a5;
+  --amber-400: #f3c85f;
+  --panel-100: rgba(255, 255, 255, 0.86);
+  --panel-200: rgba(255, 255, 255, 0.72);
+  --shadow-soft: 0 22px 45px -32px rgba(12, 16, 34, 0.55);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-background: var(--mist-50);
+  --color-foreground: var(--ink-950);
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-body);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  background:
+    radial-gradient(1200px 700px at 85% -10%, rgba(39, 177, 165, 0.25), transparent 70%),
+    radial-gradient(900px 600px at -10% 20%, rgba(255, 107, 74, 0.2), transparent 65%),
+    linear-gradient(135deg, #fbf5ec 0%, #f7f2eb 40%, #eef6f4 100%);
+  color: var(--ink-950);
+  font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+::selection {
+  background: rgba(255, 107, 74, 0.25);
+}
+
+.font-display {
+  font-family: var(--font-display), "Times New Roman", serif;
+}
+
+.glass-panel {
+  background: var(--panel-100);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: var(--shadow-soft);
+}
+
+.glass-subtle {
+  background: var(--panel-200);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+@keyframes fade-up {
+  0% {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes float-slow {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-18px) scale(1.02);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-fade-in {
+  animation: fade-in 400ms ease-out both;
+}
+
+.animate-float-slow {
+  animation: float-slow 14s ease-in-out infinite;
 }
 
 @keyframes line-hit {

@@ -11,6 +11,7 @@ export interface FanchantTag {
   type: FanchantType;
   startTime: number;
   endTime: number; // startTime + duration
+  fullLine?: boolean;
 }
 
 export interface LyricLine {

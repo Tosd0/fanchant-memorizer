@@ -42,8 +42,6 @@ interface KaraokeLineProps {
   isActive: boolean;
   endTime: number;
   onSeek: (timeMs: number) => void;
-  canInteract?: boolean;
-  onInteract?: (line: LyricLine) => void;
   onReciteProgress?: (line: LyricLine, progress: ReciteProgress) => void;
   onReciteCheerMark?: (line: LyricLine) => void;
   timeRef?: MutableRefObject<number>;
@@ -59,6 +57,13 @@ interface WordUnit {
 }
 
 const RECITE_TOLERANCE_MS = 140;
+const PLACEHOLDER_CHAR = '□';
+const PLACEHOLDER_DISPLAY = '\u3000';
+
+const applyPlaceholderDisplay = (text: string) =>
+  text.includes(PLACEHOLDER_CHAR)
+    ? text.replaceAll(PLACEHOLDER_CHAR, PLACEHOLDER_DISPLAY)
+    : text;
 
 const splitGraphemes = (text: string) => {
   if (typeof Intl !== 'undefined' && 'Segmenter' in Intl) {
@@ -81,7 +86,8 @@ const splitWordUnits = (text: string, tags: WordTag[]) => {
       .slice(0, -1)
       .map((start, index) => {
         const end = boundaries[index + 1];
-        return { text: graphemes.slice(start, end).join(''), start, end };
+        const rawText = graphemes.slice(start, end).join('');
+        return { text: applyPlaceholderDisplay(rawText), start, end };
       })
       .filter((unit) => unit.text.length > 0);
     return { graphemes, units };
@@ -95,7 +101,7 @@ const splitWordUnits = (text: string, tags: WordTag[]) => {
     const char = graphemes[i];
     if (/\s/.test(char)) {
       if (buffer) {
-        units.push({ text: buffer, start: startIndex, end: i });
+        units.push({ text: applyPlaceholderDisplay(buffer), start: startIndex, end: i });
         buffer = '';
       }
       continue;
@@ -107,7 +113,11 @@ const splitWordUnits = (text: string, tags: WordTag[]) => {
   }
 
   if (buffer) {
-    units.push({ text: buffer, start: startIndex, end: graphemes.length });
+    units.push({
+      text: applyPlaceholderDisplay(buffer),
+      start: startIndex,
+      end: graphemes.length,
+    });
   }
 
   return { graphemes, units };
@@ -170,8 +180,6 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
       isActive,
       endTime,
       onSeek,
-      canInteract,
-      onInteract,
       onReciteProgress,
       onReciteCheerMark,
       timeRef,
@@ -229,6 +237,7 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
 
     const requiredMask = useMemo(() => {
       if (!line.fanchant) return Array(totalUnits).fill(false);
+      if (line.fanchant.fullLine) return Array(totalUnits).fill(true);
       const startOffset = line.fanchant.startTime - line.startTime;
       const endOffset = line.fanchant.endTime - line.startTime;
       return startOffsets.map((start, index) => {
@@ -385,7 +394,7 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
       if (!fanchantRef.current || !line.fanchant) return;
       const startOffset = line.fanchant.startTime - line.startTime;
       const endOffset = line.fanchant.endTime - line.startTime;
-      if (isCheer) {
+      if (isCheer || line.fanchant.fullLine) {
         const { textLeft, textWidth } = metricsRef.current;
         const baseX = textLeft + textWidth / 2;
         fanchantRef.current.style.transform = `translateX(${baseX}px) translateX(-50%)`;
@@ -521,6 +530,14 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
           pressSelectingRef.current = false;
         },
         reset: () => {
+          setSelectedUnits(Array(units.length).fill(false));
+          setSelectionSource(null);
+          setPressTimingStatus(null);
+          pressCompletedAtRef.current = null;
+          pressSelectingRef.current = false;
+          pressBaseSelectionRef.current = [];
+          completedAtRef.current = null;
+          selectingRef.current = false;
           setWidth(0, metricsRef.current.textLeft);
           if (underlineRef.current) underlineRef.current.style.backgroundColor = '';
         },
@@ -548,22 +565,10 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
           ? 'line-miss ring-1 ring-rose-400/60'
           : '';
 
-    const handleInteract = useCallback(
-      (event: ReactMouseEvent<HTMLSpanElement>) => {
-        event.stopPropagation();
-        onInteract?.(line);
-      },
-      [line, onInteract]
-    );
-
     const handleClick = useCallback(() => {
       if (mode === 'recite') return;
-      if (canInteract) {
-        onInteract?.(line);
-        return;
-      }
       onSeek(line.startTime);
-    }, [canInteract, line, mode, onInteract, onSeek]);
+    }, [line.startTime, mode, onSeek]);
 
     const selectUnit = useCallback((index: number) => {
       setSelectedUnits((prev) => {
@@ -655,9 +660,13 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
       [actionsLocked, line, onReciteCheerMark, showReciteActions]
     );
 
+    const showInstantSuccess =
+      mode === 'recite' &&
+      isComplete &&
+      (!isPressSelection || pressTimingStatus === 'ok');
     const showFanchantText =
       mode === 'recite'
-        ? hasSelection || Boolean(result)
+        ? Boolean(result) || showInstantSuccess
         : Boolean(showFanchant || revealAnswer);
 
     const fanchantClass = isCheer
@@ -709,9 +718,6 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
               全选
             </button>
           </>
-        ) : null}
-        {canInteract ? (
-          <span aria-hidden="true" className="absolute inset-0 cursor-pointer" onClick={handleInteract} />
         ) : null}
         <div ref={bodyRef} className="relative z-0 w-full">
           <div

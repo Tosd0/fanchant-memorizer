@@ -9,11 +9,10 @@ import {
   type MutableRefObject,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import type { FanchantType, LyricLine } from '@/lib/lrc/types';
+import type { LyricLine } from '@/lib/lrc/types';
 import { useAudioStore } from '@/stores/audioStore';
 import { useGameStore, type GameMode, type GameResult } from '@/stores/gameStore';
 import { KaraokeLine, type KaraokeLineHandle, type ReciteProgress } from './KaraokeLine';
-import { SemiCircleMenu } from './SemiCircleMenu';
 
 interface LyricsViewProps {
   lines: LyricLine[];
@@ -22,10 +21,7 @@ interface LyricsViewProps {
   mode: GameMode;
 }
 
-interface LineJudgeState {
-  result: GameResult;
-  selectedType?: FanchantType;
-}
+type LineResultState = GameResult;
 
 const RECITE_BALL_RADIUS = 192;
 
@@ -78,9 +74,7 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
   const pendingIndexRef = useRef(0);
   const revealedRef = useRef<Set<string>>(new Set());
   const revealCursorRef = useRef(0);
-  const lineResultsRef = useRef<Record<string, LineJudgeState>>({});
-  const menuLineRef = useRef<LyricLine | null>(null);
-  const wasPlayingRef = useRef(false);
+  const lineResultsRef = useRef<Record<string, LineResultState>>({});
   const seekSyncTimeout = useRef<number | null>(null);
   const reciteProgressRef = useRef<Record<string, ReciteProgress>>({});
   const recitePressStartRef = useRef<number | null>(null);
@@ -90,10 +84,10 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
 
   const audioRef = useAudioStore((state) => state.audioRef);
   const registerResult = useGameStore((state) => state.registerResult);
+  const resetScore = useGameStore((state) => state.resetScore);
 
   const [activeIndex, setActiveIndex] = useState(0);
-  const [lineResults, setLineResults] = useState<Record<string, LineJudgeState>>({});
-  const [menuLineId, setMenuLineId] = useState<string | null>(null);
+  const [lineResults, setLineResults] = useState<Record<string, LineResultState>>({});
   const [revealedFanchants, setRevealedFanchants] = useState<Record<string, boolean>>({});
   const [isRecitePressing, setIsRecitePressing] = useState(false);
   const [ballCenterY, setBallCenterY] = useState<number | null>(null);
@@ -110,14 +104,12 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
     revealedRef.current = new Set();
     lineResultsRef.current = {};
     reciteProgressRef.current = {};
-    menuLineRef.current = null;
     recitePressStartRef.current = null;
     draggingRef.current = false;
     setIsRecitePressing(false);
     setDragPointerId(null);
     setActiveIndex(0);
     setLineResults({});
-    setMenuLineId(null);
     setRevealedFanchants({});
   }, [lines, mode]);
 
@@ -139,11 +131,10 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
   }, [clampBallCenterY]);
 
   const setResult = useCallback(
-    (line: LyricLine, result: GameResult, selectedType?: FanchantType) => {
+    (line: LyricLine, result: GameResult) => {
       if (lineResultsRef.current[line.id]) return;
-      const nextState: LineJudgeState = { result, selectedType };
-      lineResultsRef.current[line.id] = nextState;
-      setLineResults((prev) => ({ ...prev, [line.id]: nextState }));
+      lineResultsRef.current[line.id] = result;
+      setLineResults((prev) => ({ ...prev, [line.id]: result }));
       registerResult(result);
       if (result === 'miss' && typeof navigator !== 'undefined' && navigator.vibrate) {
         navigator.vibrate(40);
@@ -198,52 +189,6 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
       }
     },
     [fanchantIndex]
-  );
-
-  const openMenu = useCallback(
-    (line: LyricLine) => {
-      menuLineRef.current = line;
-      setMenuLineId(line.id);
-      if (audioRef) {
-        wasPlayingRef.current = !audioRef.paused;
-        audioRef.pause();
-      }
-    },
-    [audioRef]
-  );
-
-  const closeMenu = useCallback(
-    (resume: boolean) => {
-      setMenuLineId(null);
-      menuLineRef.current = null;
-      if (resume && audioRef && wasPlayingRef.current) {
-        audioRef.play().catch(() => undefined);
-      }
-      wasPlayingRef.current = false;
-    },
-    [audioRef]
-  );
-
-  const handleLineInteract = useCallback(
-    (line: LyricLine) => {
-      if (!line.fanchant) return;
-      if (mode === 'memory') return;
-      if (mode === 'recite') return;
-      if (lineResultsRef.current[line.id]) return;
-      if (menuLineRef.current) return;
-
-      const now = timeRef.current;
-      if (now < line.startTime) return;
-      if (now > line.fanchant.endTime) {
-        setResult(line, 'miss');
-        return;
-      }
-
-      if (mode === 'judge') {
-        openMenu(line);
-      }
-    },
-    [mode, openMenu, setResult, timeRef]
   );
 
   const handleReciteProgress = useCallback(
@@ -304,6 +249,35 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
       setDragPointerId(event.pointerId);
     },
     [audioRef, ballCenterY, mode, timeRef]
+  );
+
+  const syncAllLines = useCallback((timeMs: number) => {
+    lineRefs.current.forEach((lineRef) => {
+      lineRef?.update(timeMs);
+    });
+  }, []);
+
+  const resetReciteState = useCallback(
+    (timeMs: number) => {
+      lineResultsRef.current = {};
+      reciteProgressRef.current = {};
+      recitePressStartRef.current = null;
+      setIsRecitePressing(false);
+      setLineResults({});
+      resetScore();
+      lineRefs.current.forEach((lineRef) => {
+        lineRef?.reset();
+      });
+      if (fanchantIndex.length === 0) {
+        pendingIndexRef.current = 0;
+        return;
+      }
+      const nextPending = fanchantIndex.findIndex(
+        ({ line }) => (line.fanchant?.endTime ?? line.startTime) >= timeMs
+      );
+      pendingIndexRef.current = nextPending === -1 ? fanchantIndex.length : nextPending;
+    },
+    [fanchantIndex, resetScore]
   );
 
   const applyRecitePressInterval = useCallback(
@@ -379,34 +353,6 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
       window.removeEventListener('pointercancel', handleUp);
     };
   }, [clampBallCenterY, dragPointerId]);
-
-  const handleMenuSelect = useCallback(
-    (choice: FanchantType) => {
-      const line = menuLineRef.current;
-      if (!line || !line.fanchant) {
-        closeMenu(true);
-        return;
-      }
-      if (lineResultsRef.current[line.id]) {
-        closeMenu(true);
-        return;
-      }
-      const now = timeRef.current;
-      if (now > line.fanchant.endTime) {
-        setResult(line, 'miss', choice);
-        closeMenu(true);
-        return;
-      }
-      if (now < line.startTime) {
-        closeMenu(true);
-        return;
-      }
-      const isCorrect = choice === line.fanchant.type;
-      setResult(line, isCorrect ? 'hit' : 'miss', choice);
-      closeMenu(true);
-    },
-    [closeMenu, setResult, timeRef]
-  );
 
   const syncForTime = useCallback(
     (timeMs: number, shouldScroll: boolean, forceRevealReset = false) => {
@@ -519,8 +465,13 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
         window.clearTimeout(seekSyncTimeout.current);
       }
       seekSyncTimeout.current = window.setTimeout(() => {
-        syncForTime(timeRef.current, false, true);
-      }, 500);
+        const nextTimeMs = Number.isFinite(audioRef.currentTime)
+          ? audioRef.currentTime * 1000
+          : timeRef.current;
+        resetReciteState(nextTimeMs);
+        syncForTime(nextTimeMs, false, true);
+        syncAllLines(nextTimeMs);
+      }, 0);
     };
     audioRef.addEventListener('seeked', handleSeeked);
     return () => {
@@ -529,7 +480,7 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
       }
       audioRef.removeEventListener('seeked', handleSeeked);
     };
-  }, [audioRef, syncForTime, timeRef]);
+  }, [audioRef, resetReciteState, syncAllLines, syncForTime, timeRef]);
 
   return (
     <div className="relative flex h-full flex-col">
@@ -542,7 +493,6 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
           <div className="flex flex-col gap-4 pb-16">
             {lines.map((line, index) => {
               const lineState = lineResults[line.id];
-              const canInteract = mode === 'judge' && Boolean(line.fanchant);
               const revealAnswer = mode !== 'memory' && Boolean(lineState);
               const showFanchant = mode === 'recite' ? false : Boolean(revealedFanchants[line.id]);
 
@@ -558,12 +508,10 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
                   isActive={index === activeIndex}
                   endTime={lineMeta.endTimes[index] ?? line.startTime + 1500}
                   onSeek={onSeek}
-                  canInteract={canInteract}
-                  onInteract={handleLineInteract}
                   onReciteProgress={handleReciteProgress}
                   onReciteCheerMark={handleReciteCheerMark}
                   timeRef={timeRef}
-                  result={lineState?.result ?? null}
+                  result={lineState ?? null}
                   revealAnswer={revealAnswer}
                   showFanchant={showFanchant}
                 />
@@ -572,13 +520,6 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
           </div>
         )}
       </div>
-
-      <SemiCircleMenu
-        open={mode === 'judge' && Boolean(menuLineId)}
-        prompt="Repeat / Diff / Cheer?"
-        onSelect={handleMenuSelect}
-        onClose={() => closeMenu(true)}
-      />
 
       {mode === 'recite' ? (
         <button

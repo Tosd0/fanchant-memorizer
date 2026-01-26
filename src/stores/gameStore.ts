@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type GameMode = 'memory' | 'recite' | 'judge';
+export type GameMode = 'memory' | 'recite';
 export type GameResult = 'hit' | 'miss';
 
 interface GameStore {

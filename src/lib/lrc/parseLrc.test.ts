@@ -10,6 +10,9 @@ const cheerSample = `[00:20.00] Are you ready
 [00:20.00] [fc] <cheer, wooo!, 800>`;
 const cheerFullLine = `[00:25.00] Get loud
 [00:25.00] [fc] <cheer, wooo!>`;
+const offsetAutoSample = `[00:30.00] Hello world
+[00:30.00] [tt] <0,0> <500,5> <900,10>
+[00:30.40] [fc] <repeat, hey>`;
 
 describe('parseLrc', () => {
   it('parses lyric lines with word tags and fanchant tags', () => {
@@ -33,6 +36,7 @@ describe('parseLrc', () => {
       type: 'repeat',
       startTime: 15_000,
       endTime: 16_500,
+      fullLine: false,
     });
     expect(line.id.length).toBeGreaterThan(0);
   });
@@ -44,6 +48,7 @@ describe('parseLrc', () => {
     const line = result[0];
     expect(line.fanchant?.type).toBe('cheer');
     expect(line.fanchant?.duration).toBe(800);
+    expect(line.fanchant?.fullLine).toBe(false);
   });
 
   it('parses full-line cheer shorthand', () => {
@@ -52,6 +57,19 @@ describe('parseLrc', () => {
     expect(result).toHaveLength(1);
     const line = result[0];
     expect(line.fanchant?.type).toBe('cheer');
+    expect(line.fanchant?.endTime).toBeGreaterThan(line.startTime);
+    expect(line.fanchant?.fullLine).toBe(true);
+  });
+
+  it('extends auto-duration fanchant to end of line when timestamp differs', () => {
+    const result = parseLrc(offsetAutoSample);
+
+    expect(result).toHaveLength(1);
+    const line = result[0];
+    expect(line.fanchant?.content).toBe('hey');
+    expect(line.fanchant?.fullLine).toBe(false);
+    expect(line.fanchant?.startTime).toBe(30_400);
+    expect(line.fanchant?.endTime).toBeGreaterThan(line.fanchant!.startTime);
     expect(line.fanchant?.endTime).toBeGreaterThan(line.startTime);
   });
 });
