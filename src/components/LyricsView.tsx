@@ -82,6 +82,9 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
   const dragStartYRef = useRef(0);
   const dragStartCenterYRef = useRef(0);
   const draggingRef = useRef(false);
+  const manualScrollUntilRef = useRef(0);
+  const autoScrollRef = useRef(false);
+  const autoScrollTimeoutRef = useRef<number | null>(null);
 
   const audioRef = useAudioStore((state) => state.audioRef);
   const registerResult = useGameStore((state) => state.registerResult);
@@ -118,6 +121,14 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
   useEffect(() => {
     if (typeof document === 'undefined') return;
     setPortalTarget(document.body);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (autoScrollTimeoutRef.current) {
+        window.clearTimeout(autoScrollTimeoutRef.current);
+      }
+    };
   }, []);
 
   const clampBallCenterY = useCallback((value: number) => {
@@ -258,6 +269,35 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
     [audioRef, ballCenterY, mode, timeRef]
   );
 
+  const markManualScroll = useCallback(() => {
+    manualScrollUntilRef.current = Date.now() + 2000;
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    if (autoScrollRef.current) return;
+    markManualScroll();
+  }, [markManualScroll]);
+
+  const scrollToLine = useCallback((index: number) => {
+    const container = containerRef.current;
+    if (!container) return;
+    const target = container.querySelector<HTMLElement>(`[data-line-index="${index}"]`);
+    if (!target) return;
+    const containerRect = container.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const centerOffset = containerRect.height / 2 - targetRect.height / 2;
+    const nextTop = container.scrollTop + (targetRect.top - containerRect.top) - centerOffset;
+    autoScrollRef.current = true;
+    if (autoScrollTimeoutRef.current) {
+      window.clearTimeout(autoScrollTimeoutRef.current);
+    }
+    autoScrollTimeoutRef.current = window.setTimeout(() => {
+      autoScrollRef.current = false;
+      autoScrollTimeoutRef.current = null;
+    }, 500);
+    container.scrollTo({ top: nextTop, behavior: 'smooth' });
+  }, []);
+
   const syncAllLines = useCallback((timeMs: number) => {
     lineRefs.current.forEach((lineRef) => {
       lineRef?.update(timeMs);
@@ -372,11 +412,8 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
           lineRefs.current[previousIndex]?.update(timeMs);
           lineRefs.current[nextIndex]?.update(timeMs);
 
-          if (shouldScroll) {
-            const target = containerRef.current?.querySelector<HTMLElement>(
-              `[data-line-index="${nextIndex}"]`
-            );
-            target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          if (shouldScroll && Date.now() >= manualScrollUntilRef.current) {
+            scrollToLine(nextIndex);
           }
         } else if (nextIndex >= 0) {
           lineRefs.current[nextIndex]?.update(timeMs);
@@ -443,7 +480,15 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
         pendingIndexRef.current = cursor;
       }
     },
-    [fanchantIndex, lineMeta.startTimes, lines.length, mode, setResult, updateRevealedUpTo]
+    [
+      fanchantIndex,
+      lineMeta.startTimes,
+      lines.length,
+      mode,
+      scrollToLine,
+      setResult,
+      updateRevealedUpTo,
+    ]
   );
 
   useEffect(() => {
@@ -490,8 +535,15 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
   }, [audioRef, resetReciteState, syncAllLines, syncForTime, timeRef]);
 
   return (
-    <div className="relative flex h-full flex-col">
-      <div ref={containerRef} className="flex-1 overflow-y-auto px-6 py-10">
+    <div className="relative flex h-full min-h-0 flex-col">
+      <div
+        ref={containerRef}
+        className="flex-1 overflow-y-auto overscroll-contain px-6 py-10"
+        onScroll={handleScroll}
+        onWheel={markManualScroll}
+        onTouchMove={markManualScroll}
+        onPointerDown={markManualScroll}
+      >
         {lines.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-slate-400">
             Paste LRC and press Parse to see karaoke lines.

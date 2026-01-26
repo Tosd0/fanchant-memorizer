@@ -328,7 +328,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="glass-panel animate-fade-up flex min-h-[70vh] flex-col rounded-[32px]">
+          <div className="glass-panel animate-fade-up flex h-[420px] flex-col overflow-hidden rounded-[32px] sm:h-[480px] lg:h-[520px]">
             <div className="flex items-center justify-between border-b border-[color:var(--panel-border)] px-6 py-4">
               <h2 className="text-sm font-semibold text-[color:var(--text-primary)]">歌词</h2>
               <span className="text-xs text-[color:var(--text-soft)]">
@@ -337,7 +337,7 @@ export default function Home() {
                   : '拖拽选中歌词以显示应援'}
               </span>
             </div>
-            <div className="flex-1">
+            <div className="flex-1 min-h-0">
               <LyricsView lines={lines} timeRef={timeRef} onSeek={seek} mode={mode} />
             </div>
           </div>
