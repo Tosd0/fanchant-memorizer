@@ -14,11 +14,11 @@ export const ScoreBoard = () => {
   }, [correctCount, totalCount]);
 
   return (
-    <div className="glass-subtle flex flex-wrap items-center gap-3 rounded-full px-4 py-2 text-xs text-slate-700">
+    <div className="glass-subtle flex flex-wrap items-center gap-3 rounded-full px-4 py-2 text-xs text-[color:var(--text-primary)]">
       <span className="rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-700">
         Combo {combo}
       </span>
-      <span className="text-slate-600">
+      <span className="text-[color:var(--text-muted)]">
         Hit {correctCount} / {totalCount}
       </span>
       <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-700">

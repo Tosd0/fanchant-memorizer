@@ -1,11 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { LyricsView } from '@/components/LyricsView';
 import { ScoreBoard } from '@/components/ScoreBoard';
 import { useAudioSync } from '@/hooks/useAudioSync';
 import { parseLrc } from '@/lib/lrc/parseLrc';
 import type { LyricLine } from '@/lib/lrc/types';
+import { useAudioStore } from '@/stores/audioStore';
 import { useGameStore, type GameMode } from '@/stores/gameStore';
 
 const sampleLrc = `[00:07.50] One look give'em whiplash
@@ -13,6 +14,12 @@ const sampleLrc = `[00:07.50] One look give'em whiplash
 [00:07.50] [fc] <repeat, yeah!, 1500>`;
 
 const formatMs = (ms: number) => (ms / 1000).toFixed(2);
+
+const trackInfo = {
+  title: 'What is Love?',
+  artist: 'TWICE',
+  album: 'What is Love? - EP',
+};
 
 const modeLabels: Record<GameMode, string> = {
   memory: '记忆',
@@ -25,18 +32,36 @@ export default function Home() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [showIntro, setShowIntro] = useState(false);
   const [rememberIntro, setRememberIntro] = useState(true);
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const timeLabelRef = useRef<HTMLSpanElement | null>(null);
+  const progressBarRef = useRef<HTMLDivElement | null>(null);
+  const progressLabelRef = useRef<HTMLSpanElement | null>(null);
   const mode = useGameStore((state) => state.mode);
   const setMode = useGameStore((state) => state.setMode);
   const resetScore = useGameStore((state) => state.resetScore);
+  const audioElement = useAudioStore((state) => state.audioRef);
+  const isPlaying = useAudioStore((state) => state.isPlaying);
 
-  const { audioRef, timeRef, seek } = useAudioSync({
-    onFrame: (timeMs) => {
+  const handleFrame = useCallback(
+    (timeMs: number) => {
       if (timeLabelRef.current) {
         timeLabelRef.current.textContent = `${formatMs(timeMs)}s`;
       }
+      const durationMs = audioElement?.duration ? audioElement.duration * 1000 : 0;
+      if (progressLabelRef.current) {
+        progressLabelRef.current.textContent = durationMs
+          ? `${formatMs(timeMs)} / ${formatMs(durationMs)}`
+          : `${formatMs(timeMs)} / --`;
+      }
+      if (progressBarRef.current) {
+        const percent = durationMs > 0 ? Math.min((timeMs / durationMs) * 100, 100) : 0;
+        progressBarRef.current.style.width = `${percent}%`;
+      }
     },
-  });
+    [audioElement]
+  );
+
+  const { audioRef, timeRef, seek } = useAudioSync({ onFrame: handleFrame });
 
   const handleParse = useCallback(() => {
     const parsed = parseLrc(lrcText);
@@ -82,6 +107,26 @@ export default function Home() {
     }
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const storedTheme = window.localStorage.getItem('fanchantTheme');
+      if (storedTheme === 'light' || storedTheme === 'dark') {
+        setTheme(storedTheme);
+        return;
+      }
+    } catch {
+      // Ignore storage failures.
+    }
+    const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+    setTheme(prefersDark ? 'dark' : 'light');
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.body.classList.toggle('theme-dark', theme === 'dark');
+  }, [theme]);
+
   const dismissIntro = useCallback(
     (persist: boolean) => {
       setShowIntro(false);
@@ -95,29 +140,82 @@ export default function Home() {
     []
   );
 
-  const parsedPreview = useMemo(() => JSON.stringify(lines, null, 2), [lines]);
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => {
+      const next = prev === 'dark' ? 'light' : 'dark';
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.setItem('fanchantTheme', next);
+        } catch {
+          // Ignore storage failures.
+        }
+      }
+      return next;
+    });
+  }, []);
 
   return (
-    <div className="relative min-h-screen overflow-hidden text-slate-900">
-      <div className="pointer-events-none absolute -left-24 top-10 h-64 w-64 rounded-full bg-[radial-gradient(circle,#ffd5b5_0%,transparent_70%)] opacity-70 blur-3xl animate-float-slow" />
-      <div className="pointer-events-none absolute -right-32 top-32 h-80 w-80 rounded-full bg-[radial-gradient(circle,#baf1ea_0%,transparent_70%)] opacity-70 blur-3xl animate-float-slow" />
-      <div className="pointer-events-none absolute bottom-[-200px] left-1/3 h-96 w-96 rounded-full bg-[radial-gradient(circle,#ffd1de_0%,transparent_70%)] opacity-60 blur-[120px]" />
+    <div className="relative min-h-screen overflow-hidden" style={{ background: 'var(--app-bg)' }}>
+      <div
+        className={`pointer-events-none absolute -left-24 top-10 h-64 w-64 rounded-full bg-[radial-gradient(circle,#ffd5b5_0%,transparent_70%)] blur-3xl animate-float-slow ${
+          theme === 'dark' ? 'opacity-40' : 'opacity-70'
+        }`}
+      />
+      <div
+        className={`pointer-events-none absolute -right-32 top-32 h-80 w-80 rounded-full bg-[radial-gradient(circle,#baf1ea_0%,transparent_70%)] blur-3xl animate-float-slow ${
+          theme === 'dark' ? 'opacity-35' : 'opacity-70'
+        }`}
+      />
+      <div
+        className={`pointer-events-none absolute bottom-[-200px] left-1/3 h-96 w-96 rounded-full bg-[radial-gradient(circle,#ffd1de_0%,transparent_70%)] blur-[120px] ${
+          theme === 'dark' ? 'opacity-35' : 'opacity-60'
+        }`}
+      />
 
-      <main className="relative mx-auto flex w-full max-w-7xl flex-col gap-8 px-6 pb-16 pt-10">
+      <div className="fixed left-0 right-0 top-0 z-50">
+        <div className="pt-[env(safe-area-inset-top)]">
+          <div className="glass-panel mx-auto flex w-full max-w-7xl items-center justify-between gap-4 px-6 py-3">
+            <div className="flex items-center gap-4">
+              <span className="chip rounded-full px-4 py-1.5 text-sm font-semibold uppercase tracking-[0.2em]">
+                {isPlaying ? '播放中' : '暂停'}
+              </span>
+              <div className="flex flex-col">
+                <span className="text-sm font-semibold text-[color:var(--text-primary)]">
+                  {trackInfo.title}
+                </span>
+                <span className="text-xs text-[color:var(--text-muted)]">
+                  {trackInfo.artist} · {trackInfo.album}
+                </span>
+              </div>
+            </div>
+            <span ref={progressLabelRef} className="text-xs text-[color:var(--text-muted)]">
+              0.00 / --
+            </span>
+          </div>
+          <div className="h-1 w-full bg-[color:var(--panel-border-subtle)]">
+            <div
+              ref={progressBarRef}
+              className="h-full w-0 bg-gradient-to-r from-[color:var(--sunset-500)] via-[color:var(--amber-400)] to-[color:var(--teal-500)] transition-[width] duration-150 ease-linear"
+            />
+          </div>
+        </div>
+      </div>
+
+      <main className="relative mx-auto flex w-full max-w-7xl flex-col gap-8 px-6 pb-16 pt-[calc(96px+env(safe-area-inset-top))]">
         <header className="flex flex-col gap-6">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-4">
-              <div className="glass-panel flex h-12 w-12 items-center justify-center rounded-2xl text-lg font-semibold text-slate-800 shadow-lg">
+              <div className="glass-panel flex h-12 w-12 items-center justify-center rounded-2xl text-lg font-semibold shadow-lg">
                 FM
               </div>
               <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">
+                <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--text-soft)]">
                   Live Session
                 </p>
-                <h1 className="font-display text-3xl font-semibold text-slate-900 md:text-4xl">
+                <h1 className="font-display text-3xl font-semibold md:text-4xl">
                   Fanchant Memorizer
                 </h1>
-                <p className="text-sm text-slate-600">
+                <p className="text-sm text-[color:var(--text-muted)]">
                   把应援、节奏和歌词放在同一舞台：边听边记边练。
                 </p>
               </div>
@@ -126,9 +224,16 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => setShowIntro(true)}
-                className="glass-subtle rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.25em] text-slate-700 transition hover:-translate-y-0.5 hover:shadow-lg"
+                className="glass-subtle rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.25em] text-[color:var(--text-primary)] transition hover:-translate-y-0.5 hover:shadow-lg"
               >
                 引导页
+              </button>
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className="glass-subtle rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.25em] text-[color:var(--text-primary)] transition hover:-translate-y-0.5 hover:shadow-lg"
+              >
+                {theme === 'dark' ? '白天模式' : '夜间模式'}
               </button>
               <ScoreBoard />
             </div>
@@ -144,15 +249,15 @@ export default function Home() {
                   className={`rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] transition ${
                     mode === option
                       ? 'bg-slate-900 text-white shadow-lg'
-                      : 'text-slate-500 hover:text-slate-900'
+                      : 'text-[color:var(--text-soft)] hover:text-[color:var(--text-primary)]'
                   }`}
                 >
                   {modeLabels[option]}
                 </button>
               ))}
             </div>
-            <div className="glass-subtle flex items-center gap-2 rounded-full px-4 py-2 text-xs text-slate-600">
-              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+            <div className="glass-subtle flex items-center gap-2 rounded-full px-4 py-2 text-xs text-[color:var(--text-muted)]">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.5)]" />
               节奏同步中 · 可点击歌词跳转
             </div>
           </div>
@@ -162,8 +267,8 @@ export default function Home() {
           <div className="flex flex-col gap-4">
             <div className="glass-panel animate-fade-up rounded-3xl p-5" style={{ animationDelay: '60ms' }}>
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-slate-800">音频控台</h2>
-                <span className="text-xs text-slate-500">
+                <h2 className="text-sm font-semibold text-[color:var(--text-primary)]">音频控台</h2>
+                <span className="text-xs text-[color:var(--text-soft)]">
                   Current: <span ref={timeLabelRef}>0.00s</span>
                 </span>
               </div>
@@ -172,7 +277,7 @@ export default function Home() {
                   type="file"
                   accept="audio/*"
                   onChange={handleAudioChange}
-                  className="text-xs text-slate-600 file:mr-3 file:rounded-full file:border-0 file:bg-slate-900 file:px-3 file:py-1 file:text-xs file:text-white hover:file:bg-slate-800"
+                  className="text-xs text-[color:var(--text-muted)] file:mr-3 file:rounded-full file:border-0 file:bg-slate-900 file:px-3 file:py-1 file:text-xs file:text-white hover:file:bg-slate-800"
                 />
                 <audio ref={audioRef} src={audioUrl ?? undefined} controls className="w-full" />
               </div>
@@ -180,7 +285,7 @@ export default function Home() {
 
             <div className="glass-panel animate-fade-up rounded-3xl p-5" style={{ animationDelay: '120ms' }}>
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-slate-800">歌词编辑</h2>
+                <h2 className="text-sm font-semibold text-[color:var(--text-primary)]">歌词编辑</h2>
                 <button
                   type="button"
                   onClick={handleParse}
@@ -192,22 +297,13 @@ export default function Home() {
               <textarea
                 value={lrcText}
                 onChange={(event) => setLrcText(event.target.value)}
-                className="mt-3 h-44 w-full resize-none rounded-2xl border border-white/70 bg-white/80 p-4 text-xs text-slate-700 outline-none"
+                className="mt-3 h-44 w-full resize-none rounded-2xl border border-[color:var(--panel-border-subtle)] bg-[color:var(--panel-bg-subtle)] p-4 text-xs text-[color:var(--text-muted)] outline-none"
               />
             </div>
 
-            <details className="glass-panel animate-fade-up rounded-3xl p-5" style={{ animationDelay: '180ms' }}>
-              <summary className="cursor-pointer text-sm font-semibold text-slate-800">
-                解析预览
-              </summary>
-              <pre className="mt-3 max-h-64 overflow-auto rounded-2xl border border-white/70 bg-white/70 p-3 text-[11px] text-slate-700">
-                {parsedPreview}
-              </pre>
-            </details>
-
-            <div className="glass-panel animate-fade-up rounded-3xl p-5" style={{ animationDelay: '240ms' }}>
-              <h3 className="text-sm font-semibold text-slate-800">本场提示</h3>
-              <ul className="mt-3 space-y-2 text-xs text-slate-600">
+            <div className="glass-panel animate-fade-up rounded-3xl p-5" style={{ animationDelay: '180ms' }}>
+              <h3 className="text-sm font-semibold text-[color:var(--text-primary)]">本场提示</h3>
+              <ul className="mt-3 space-y-2 text-xs text-[color:var(--text-muted)]">
                 <li>记忆模式：听到时间点时点击对应行。</li>
                 <li>跟唱模式：长按拖拽选中应援词。</li>
                 <li>解析后可立即切换模式练习。</li>
@@ -216,9 +312,9 @@ export default function Home() {
           </div>
 
           <div className="glass-panel animate-fade-up flex min-h-[70vh] flex-col rounded-[32px]">
-            <div className="flex items-center justify-between border-b border-white/60 px-6 py-4">
-              <h2 className="text-sm font-semibold text-slate-800">舞台视图</h2>
-              <span className="text-xs text-slate-500">
+            <div className="flex items-center justify-between border-b border-[color:var(--panel-border)] px-6 py-4">
+              <h2 className="text-sm font-semibold text-[color:var(--text-primary)]">舞台视图</h2>
+              <span className="text-xs text-[color:var(--text-soft)]">
                 {mode === 'memory'
                   ? '点击歌词定位节奏'
                   : '拖拽选中歌词以显示应援'}
@@ -233,20 +329,20 @@ export default function Home() {
 
       {showIntro ? (
         <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 px-6 py-10 backdrop-blur-sm"
+          className="fixed inset-0 z-40 flex items-center justify-center bg-[color:var(--overlay-bg)] px-6 py-10 backdrop-blur-sm"
           role="dialog"
           aria-modal="true"
         >
           <div className="glass-panel animate-fade-up w-full max-w-3xl rounded-[32px] p-8 shadow-2xl">
             <div className="flex flex-col gap-6">
               <div>
-                <p className="text-xs uppercase tracking-[0.4em] text-slate-500">
+                <p className="text-xs uppercase tracking-[0.4em] text-[color:var(--text-soft)]">
                   Welcome
                 </p>
-                <h2 className="font-display text-3xl font-semibold text-slate-900">
+                <h2 className="font-display text-3xl font-semibold">
                   把应援练到肌肉记忆
                 </h2>
-                <p className="mt-2 text-sm text-slate-600">
+                <p className="mt-2 text-sm text-[color:var(--text-muted)]">
                   三步开始：导入音频、粘贴 LRC、选择练习模式。所有进度都会在右侧舞台同步显示。
                 </p>
               </div>
@@ -259,25 +355,25 @@ export default function Home() {
                 ].map((step, index) => (
                   <div
                     key={step.title}
-                    className="glass-subtle animate-fade-up rounded-2xl p-4 text-left text-sm text-slate-700"
+                    className="glass-subtle animate-fade-up rounded-2xl p-4 text-left text-sm text-[color:var(--text-muted)]"
                     style={{ animationDelay: `${120 + index * 80}ms` }}
                   >
-                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                    <p className="text-xs uppercase tracking-[0.2em] text-[color:var(--text-soft)]">
                       Step {index + 1}
                     </p>
-                    <p className="mt-2 text-sm font-semibold text-slate-900">{step.title}</p>
-                    <p className="mt-1 text-xs text-slate-600">{step.desc}</p>
+                    <p className="mt-2 text-sm font-semibold text-[color:var(--text-primary)]">{step.title}</p>
+                    <p className="mt-1 text-xs text-[color:var(--text-muted)]">{step.desc}</p>
                   </div>
                 ))}
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-4">
-                <label className="flex items-center gap-2 text-xs text-slate-600">
+                <label className="flex items-center gap-2 text-xs text-[color:var(--text-muted)]">
                   <input
                     type="checkbox"
                     checked={rememberIntro}
                     onChange={(event) => setRememberIntro(event.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300 text-slate-900 accent-slate-900"
+                    className="h-4 w-4 rounded border-[color:var(--panel-border-subtle)] text-[color:var(--text-primary)] accent-amber-400"
                   />
                   下次直接进入练习
                 </label>
@@ -285,7 +381,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => dismissIntro(false)}
-                    className="rounded-full border border-slate-300 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-600 hover:border-slate-400"
+                    className="rounded-full border border-slate-300 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)] hover:border-slate-400"
                   >
                     先看看界面
                   </button>

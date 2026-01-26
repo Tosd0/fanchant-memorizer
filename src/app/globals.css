@@ -1,33 +1,37 @@
 @import "tailwindcss";
 
 :root {
-  --ink-950: #0c1022;
-  --ink-800: #1a2138;
-  --ink-600: #3a4766;
-  --mist-50: #f7f4ee;
-  --mist-100: #f0ede6;
-  --mist-200: #e6e2d9;
   --sunset-500: #ff6b4a;
   --teal-500: #27b1a5;
   --amber-400: #f3c85f;
-  --panel-100: rgba(255, 255, 255, 0.86);
-  --panel-200: rgba(255, 255, 255, 0.72);
+
+  --app-bg:
+    radial-gradient(1200px 700px at 85% -10%, rgba(39, 177, 165, 0.25), transparent 70%),
+    radial-gradient(900px 600px at -10% 20%, rgba(255, 107, 74, 0.2), transparent 65%),
+    linear-gradient(135deg, #fbf5ec 0%, #f7f2eb 40%, #eef6f4 100%);
+  --text-primary: #0c1022;
+  --text-muted: #4a5568;
+  --text-soft: #64748b;
+  --panel-bg: rgba(255, 255, 255, 0.86);
+  --panel-bg-subtle: rgba(255, 255, 255, 0.72);
+  --panel-border: rgba(255, 255, 255, 0.6);
+  --panel-border-subtle: rgba(255, 255, 255, 0.5);
   --shadow-soft: 0 22px 45px -32px rgba(12, 16, 34, 0.55);
+  --overlay-bg: rgba(15, 23, 42, 0.4);
+  --chip-bg: rgba(255, 255, 255, 0.65);
+  --chip-text: #1f2937;
 }
 
 @theme inline {
-  --color-background: var(--mist-50);
-  --color-foreground: var(--ink-950);
+  --color-background: #f7f4ee;
+  --color-foreground: var(--text-primary);
   --font-sans: var(--font-body);
   --font-mono: var(--font-body);
 }
 
 body {
-  background:
-    radial-gradient(1200px 700px at 85% -10%, rgba(39, 177, 165, 0.25), transparent 70%),
-    radial-gradient(900px 600px at -10% 20%, rgba(255, 107, 74, 0.2), transparent 65%),
-    linear-gradient(135deg, #fbf5ec 0%, #f7f2eb 40%, #eef6f4 100%);
-  color: var(--ink-950);
+  background: var(--app-bg);
+  color: var(--text-primary);
   font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
   min-height: 100vh;
 }
@@ -36,21 +40,46 @@ body {
   background: rgba(255, 107, 74, 0.25);
 }
 
+.theme-dark {
+  --app-bg:
+    radial-gradient(900px 600px at 90% -10%, rgba(39, 177, 165, 0.18), transparent 70%),
+    radial-gradient(800px 500px at -10% 20%, rgba(255, 107, 74, 0.14), transparent 65%),
+    linear-gradient(135deg, #0b0f1d 0%, #101827 45%, #0d1b1f 100%);
+  --text-primary: #f5f3ed;
+  --text-muted: #c2cad6;
+  --text-soft: #9aa3b2;
+  --panel-bg: rgba(16, 22, 36, 0.85);
+  --panel-bg-subtle: rgba(16, 22, 36, 0.65);
+  --panel-border: rgba(255, 255, 255, 0.1);
+  --panel-border-subtle: rgba(255, 255, 255, 0.08);
+  --shadow-soft: 0 24px 50px -32px rgba(0, 0, 0, 0.75);
+  --overlay-bg: rgba(5, 8, 16, 0.6);
+  --chip-bg: rgba(255, 255, 255, 0.08);
+  --chip-text: #e2e8f0;
+}
+
 .font-display {
   font-family: var(--font-display), "Times New Roman", serif;
 }
 
 .glass-panel {
-  background: var(--panel-100);
+  background: var(--panel-bg);
   backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--panel-border);
   box-shadow: var(--shadow-soft);
+  color: var(--text-primary);
 }
 
 .glass-subtle {
-  background: var(--panel-200);
+  background: var(--panel-bg-subtle);
   backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  border: 1px solid var(--panel-border-subtle);
+  color: var(--text-primary);
+}
+
+.chip {
+  background: var(--chip-bg);
+  color: var(--chip-text);
 }
 
 @keyframes fade-up {
