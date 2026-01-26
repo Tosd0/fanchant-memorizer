@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'reac
 import { LyricsView } from '@/components/LyricsView';
 import { ScoreBoard } from '@/components/ScoreBoard';
 import { useAudioSync } from '@/hooks/useAudioSync';
+import { parseId3Tags } from '@/lib/audio/id3';
 import { parseLrc } from '@/lib/lrc/parseLrc';
 import type { LyricLine } from '@/lib/lrc/types';
 import { useAudioStore } from '@/stores/audioStore';
@@ -15,10 +16,10 @@ const sampleLrc = `[00:07.50] One look give'em whiplash
 
 const formatMs = (ms: number) => (ms / 1000).toFixed(2);
 
-const trackInfo = {
-  title: 'What is Love?',
-  artist: 'TWICE',
-  album: 'What is Love? - EP',
+const fallbackTrackInfo = {
+  title: '未选择音频',
+  artist: '—',
+  album: '—',
 };
 
 const modeLabels: Record<GameMode, string> = {
@@ -30,6 +31,7 @@ export default function Home() {
   const [lrcText, setLrcText] = useState(sampleLrc);
   const [lines, setLines] = useState<LyricLine[]>(() => parseLrc(sampleLrc));
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [trackInfo, setTrackInfo] = useState(fallbackTrackInfo);
   const [showIntro, setShowIntro] = useState(false);
   const [rememberIntro, setRememberIntro] = useState(true);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -87,6 +89,25 @@ export default function Home() {
         if (prev) URL.revokeObjectURL(prev);
         return nextUrl;
       });
+      file
+        .arrayBuffer()
+        .then((buffer) => {
+          const tags = parseId3Tags(buffer);
+          const baseName = file.name.replace(/\.[^/.]+$/, '');
+          setTrackInfo({
+            title: tags.title || baseName || fallbackTrackInfo.title,
+            artist: tags.artist || fallbackTrackInfo.artist,
+            album: tags.album || fallbackTrackInfo.album,
+          });
+        })
+        .catch(() => {
+          const baseName = file.name.replace(/\.[^/.]+$/, '');
+          setTrackInfo({
+            title: baseName || fallbackTrackInfo.title,
+            artist: fallbackTrackInfo.artist,
+            album: fallbackTrackInfo.album,
+          });
+        });
     },
     []
   );
@@ -210,13 +231,13 @@ export default function Home() {
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--text-soft)]">
-                  Live Session
+                  v 1.0.0
                 </p>
                 <h1 className="font-display text-3xl font-semibold md:text-4xl">
                   Fanchant Memorizer
                 </h1>
                 <p className="text-sm text-[color:var(--text-muted)]">
-                  把应援、节奏和歌词放在同一舞台：边听边记边练。
+                  可交互的应援练习工具！
                 </p>
               </div>
             </div>
@@ -255,10 +276,6 @@ export default function Home() {
                   {modeLabels[option]}
                 </button>
               ))}
-            </div>
-            <div className="glass-subtle flex items-center gap-2 rounded-full px-4 py-2 text-xs text-[color:var(--text-muted)]">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.5)]" />
-              节奏同步中 · 可点击歌词跳转
             </div>
           </div>
         </header>

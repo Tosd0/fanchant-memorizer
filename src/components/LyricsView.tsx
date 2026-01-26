@@ -9,6 +9,7 @@ import {
   type MutableRefObject,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
+import { createPortal } from 'react-dom';
 import type { LyricLine } from '@/lib/lrc/types';
 import { useAudioStore } from '@/stores/audioStore';
 import { useGameStore, type GameMode, type GameResult } from '@/stores/gameStore';
@@ -92,6 +93,7 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
   const [isRecitePressing, setIsRecitePressing] = useState(false);
   const [ballCenterY, setBallCenterY] = useState<number | null>(null);
   const [dragPointerId, setDragPointerId] = useState<number | null>(null);
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
 
   const lineMeta = useMemo(() => buildLineMeta(lines), [lines]);
   const fanchantIndex = useMemo(() => buildFanchantIndex(lines), [lines]);
@@ -112,6 +114,11 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
     setLineResults({});
     setRevealedFanchants({});
   }, [lines, mode]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    setPortalTarget(document.body);
+  }, []);
 
   const clampBallCenterY = useCallback((value: number) => {
     if (typeof window === 'undefined') return value;
@@ -521,25 +528,28 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
         )}
       </div>
 
-      {mode === 'recite' ? (
-        <button
-          type="button"
-          aria-label="Hold to select words across lines"
-          aria-pressed={isRecitePressing}
-          onPointerDown={handleRecitePressStart}
-          className={`fixed right-0 z-50 rounded-full border shadow-lg transition touch-none ${
-            isRecitePressing
-              ? 'border-emerald-400 bg-emerald-300 text-emerald-900'
-              : 'border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-          }`}
-          style={{
-            top: ballCenterY ?? '100%',
-            transform: 'translate(50%, -50%)',
-            width: RECITE_BALL_RADIUS * 2,
-            height: RECITE_BALL_RADIUS * 2,
-          }}
-        />
-      ) : null}
+      {mode === 'recite' && portalTarget
+        ? createPortal(
+            <button
+              type="button"
+              aria-label="Hold to select words across lines"
+              aria-pressed={isRecitePressing}
+              onPointerDown={handleRecitePressStart}
+              className={`fixed right-0 z-50 rounded-full border shadow-lg transition touch-none ${
+                isRecitePressing
+                  ? 'border-emerald-400 bg-emerald-300 text-emerald-900'
+                  : 'border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+              }`}
+              style={{
+                top: ballCenterY ?? '100%',
+                transform: 'translate(50%, -50%)',
+                width: RECITE_BALL_RADIUS * 2,
+                height: RECITE_BALL_RADIUS * 2,
+              }}
+            />,
+            portalTarget
+          )
+        : null}
     </div>
   );
 };

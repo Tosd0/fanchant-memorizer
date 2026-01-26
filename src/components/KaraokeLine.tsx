@@ -556,8 +556,8 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
     );
 
     const wrapperClass = isActive
-      ? 'bg-slate-50 text-slate-900'
-      : 'text-slate-500 hover:bg-slate-50/80';
+      ? 'bg-[color:var(--lyric-bg)] text-[color:var(--text-primary)]'
+      : 'text-[color:var(--text-soft)] hover:bg-[color:var(--lyric-bg-hover)]';
     const resultClass =
       result === 'hit'
         ? 'line-hit ring-1 ring-emerald-400/60'
@@ -713,7 +713,7 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
               onClick={handleSelectAll}
               disabled={!canSelect || totalUnits === 0}
               style={{ zIndex: 20 }}
-              className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full border border-[color:var(--lyric-action-border)] bg-[color:var(--lyric-action-bg)] px-3 py-1 text-xs font-semibold text-[color:var(--text-muted)] shadow-sm transition hover:bg-[color:var(--lyric-bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               全选
             </button>
@@ -734,12 +734,12 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
                 data-word-index={index}
                 onPointerDown={handleWordPointerDown(index)}
                 onPointerEnter={handleWordPointerEnter(index)}
-                className={`rounded-lg border px-3 py-1 text-lg tracking-wide text-slate-800 transition ${
+                className={`rounded-lg border px-3 py-1 text-lg tracking-wide text-[color:var(--lyric-word-text)] transition ${
                   canSelect ? 'cursor-pointer select-none' : ''
                 } ${
                   selectedUnits[index]
-                    ? 'border-slate-300 bg-slate-200 text-slate-900'
-                    : 'border-slate-200 bg-white'
+                    ? 'border-[color:var(--lyric-word-selected-border)] bg-[color:var(--lyric-word-selected-bg)] text-[color:var(--lyric-word-selected-text)]'
+                    : 'border-[color:var(--lyric-word-border)] bg-[color:var(--lyric-word-bg)]'
                 }`}
               >
                 {unit.text}

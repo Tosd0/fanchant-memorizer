@@ -20,6 +20,16 @@
   --overlay-bg: rgba(15, 23, 42, 0.4);
   --chip-bg: rgba(255, 255, 255, 0.65);
   --chip-text: #1f2937;
+  --lyric-bg: rgba(255, 255, 255, 0.75);
+  --lyric-bg-hover: rgba(255, 255, 255, 0.9);
+  --lyric-word-bg: rgba(255, 255, 255, 0.9);
+  --lyric-word-border: rgba(226, 232, 240, 0.9);
+  --lyric-word-text: #1e293b;
+  --lyric-word-selected-bg: rgba(226, 232, 240, 0.9);
+  --lyric-word-selected-border: rgba(203, 213, 225, 0.9);
+  --lyric-word-selected-text: #0f172a;
+  --lyric-action-bg: rgba(255, 255, 255, 0.85);
+  --lyric-action-border: rgba(226, 232, 240, 0.9);
 }
 
 @theme inline {
@@ -56,6 +66,16 @@ body {
   --overlay-bg: rgba(5, 8, 16, 0.6);
   --chip-bg: rgba(255, 255, 255, 0.08);
   --chip-text: #e2e8f0;
+  --lyric-bg: rgba(16, 22, 36, 0.75);
+  --lyric-bg-hover: rgba(30, 41, 59, 0.85);
+  --lyric-word-bg: rgba(15, 23, 42, 0.85);
+  --lyric-word-border: rgba(71, 85, 105, 0.5);
+  --lyric-word-text: #e2e8f0;
+  --lyric-word-selected-bg: rgba(51, 65, 85, 0.9);
+  --lyric-word-selected-border: rgba(71, 85, 105, 0.8);
+  --lyric-word-selected-text: #f8fafc;
+  --lyric-action-bg: rgba(15, 23, 42, 0.9);
+  --lyric-action-border: rgba(71, 85, 105, 0.6);
 }
 
 .font-display {
