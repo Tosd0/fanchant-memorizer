@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { LyricsView } from '@/components/LyricsView';
 import { ScoreBoard } from '@/components/ScoreBoard';
+import type { CreateSelection } from '@/components/KaraokeLine';
 import { useAudioSync } from '@/hooks/useAudioSync';
 import { parseId3Tags } from '@/lib/audio/id3';
 import { parseLrc } from '@/lib/lrc/parseLrc';
-import type { LyricLine } from '@/lib/lrc/types';
+import type { FanchantTag, LyricLine } from '@/lib/lrc/types';
 import { useAudioStore } from '@/stores/audioStore';
 import { useGameStore, type GameMode } from '@/stores/gameStore';
 
@@ -15,6 +16,39 @@ const sampleLrc = `[00:07.50] One look give'em whiplash
 [00:07.50] [fc] <repeat, yeah!, 1500>`;
 
 const formatMs = (ms: number) => (ms / 1000).toFixed(2);
+
+const formatLrcTimestamp = (ms: number) => {
+  const safeMs = Math.max(0, Math.floor(ms));
+  const minutes = Math.floor(safeMs / 60_000);
+  const seconds = Math.floor((safeMs % 60_000) / 1000);
+  const centiseconds = Math.floor((safeMs % 1000) / 10);
+  return `[${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(centiseconds).padStart(2, '0')}]`;
+};
+
+const serializeLrc = (lines: LyricLine[]) =>
+  lines
+    .flatMap((line) => {
+      const lyricTime = formatLrcTimestamp(line.startTime);
+      const rows = [`${lyricTime} ${line.text}`];
+      if (line.words.length > 0) {
+        const wordPayload = [...line.words]
+          .sort((a, b) => a.offset - b.offset)
+          .map((word) => `<${Math.max(0, Math.round(word.offset))},${Math.max(0, Math.round(word.charIndex))}>`)
+          .join(' ');
+        rows.push(`${lyricTime} [tt] ${wordPayload}`);
+      }
+      if (line.fanchant) {
+        const fcTime = formatLrcTimestamp(line.fanchant.startTime);
+        const durationPart = line.fanchant.autoDuration
+          ? ''
+          : `, ${Math.max(1, Math.round(line.fanchant.duration))}`;
+        rows.push(`${fcTime} [fc] <${line.fanchant.type}, ${line.fanchant.content}${durationPart}>`);
+      }
+      return rows;
+    })
+    .join('\n');
+
+const initialLines = parseLrc(sampleLrc);
 
 const fallbackTrackInfo = {
   title: '未选择音频',
@@ -25,16 +59,25 @@ const fallbackTrackInfo = {
 const modeLabels: Record<GameMode, string> = {
   memory: '记忆',
   recite: '跟唱',
+  edit: '编辑',
 };
 
 export default function Home() {
   const [lrcText, setLrcText] = useState(sampleLrc);
-  const [lines, setLines] = useState<LyricLine[]>(() => parseLrc(sampleLrc));
+  const [lines, setLines] = useState<LyricLine[]>(() => initialLines);
+  const [hasWordTags, setHasWordTags] = useState(() =>
+    initialLines.some((line) => line.words.length > 0)
+  );
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [trackInfo, setTrackInfo] = useState(fallbackTrackInfo);
   const [showIntro, setShowIntro] = useState(false);
   const [rememberIntro, setRememberIntro] = useState(true);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [showWordTagNotice, setShowWordTagNotice] = useState(false);
+  const [createDraft, setCreateDraft] = useState<CreateSelection | null>(null);
+  const [createMode, setCreateMode] = useState<'repeat' | 'custom' | 'cheer'>('repeat');
+  const [customFanchant, setCustomFanchant] = useState('');
+  const [createError, setCreateError] = useState<string | null>(null);
   const timeLabelRef = useRef<HTMLSpanElement | null>(null);
   const progressBarRef = useRef<HTMLDivElement | null>(null);
   const progressLabelRef = useRef<HTMLSpanElement | null>(null);
@@ -69,16 +112,50 @@ export default function Home() {
     const parsed = parseLrc(lrcText);
     setLines(parsed);
     resetScore();
+    setCreateDraft(null);
+    setCreateMode('repeat');
+    setCustomFanchant('');
+    setCreateError(null);
+    const nextHasTags = parsed.some((line) => line.words.length > 0);
+    setHasWordTags(nextHasTags);
+    if (!nextHasTags) {
+      setShowWordTagNotice(true);
+      if (mode === 'edit') {
+        setMode('memory');
+      }
+    } else {
+      setShowWordTagNotice(false);
+    }
     console.info('Parsed LRC', parsed);
-  }, [lrcText, resetScore]);
+  }, [lrcText, mode, resetScore, setMode]);
 
   const handleModeChange = useCallback(
-    (nextMode: GameMode) => {
+    (nextMode: Exclude<GameMode, 'edit'>) => {
+      setCreateDraft(null);
+      setCreateError(null);
       setMode(nextMode);
       resetScore();
     },
     [resetScore, setMode]
   );
+
+  const handleEditToggle = useCallback(() => {
+    if (mode === 'edit') {
+      setCreateDraft(null);
+      setCreateError(null);
+      setMode('memory');
+      resetScore();
+      return;
+    }
+    if (!hasWordTags) {
+      setShowWordTagNotice(true);
+      return;
+    }
+    setCreateDraft(null);
+    setCreateError(null);
+    setMode('edit');
+    resetScore();
+  }, [hasWordTags, mode, resetScore, setMode]);
 
   const handleAudioChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -175,6 +252,73 @@ export default function Home() {
     });
   }, []);
 
+  const handleCreateSelection = useCallback((selection: CreateSelection) => {
+    setCreateDraft(selection);
+    setCreateMode('repeat');
+    setCustomFanchant('');
+    setCreateError(null);
+  }, []);
+
+  const closeCreateModal = useCallback(() => {
+    setCreateDraft(null);
+    setCreateError(null);
+  }, []);
+
+  const applyCreateFanchant = useCallback(() => {
+    if (!createDraft) return;
+    const trimmedCustom = customFanchant.trim();
+    if (createMode === 'custom' && trimmedCustom.length === 0) {
+      setCreateError('请输入应援词。');
+      return;
+    }
+    const startOffset = Math.max(createDraft.startOffset, 0);
+    const endOffset = Math.max(createDraft.endOffset, startOffset + 1);
+    const duration = Math.max(endOffset - startOffset, 1);
+    const type = createMode === 'repeat' ? 'repeat' : createMode === 'custom' ? 'diff' : 'cheer';
+    const content =
+      createMode === 'custom'
+        ? trimmedCustom
+        : createMode === 'repeat'
+          ? createDraft.selectedText
+          : 'cheer';
+    const isTailSelection = createDraft.selectedIndices.includes(createDraft.totalUnits - 1);
+    const useAutoDuration =
+      isTailSelection && (createMode === 'repeat' || createMode === 'custom');
+    const startTime = createDraft.line.startTime + startOffset;
+    const currentLineIndex = lines.findIndex((line) => line.id === createDraft.line.id);
+    const nextLineStart =
+      currentLineIndex >= 0
+        ? lines[currentLineIndex + 1]?.startTime ?? createDraft.line.startTime + 2000
+        : createDraft.line.startTime + 2000;
+    const resolvedDuration = useAutoDuration
+      ? Math.max(Math.max(nextLineStart, startTime + 400) - startTime, 1)
+      : duration;
+    const fanchant: FanchantTag = {
+      content,
+      duration: resolvedDuration,
+      type,
+      startTime,
+      endTime: startTime + resolvedDuration,
+      fullLine: createDraft.selectedIndices.length === createDraft.totalUnits,
+      ...(useAutoDuration ? { autoDuration: true } : {}),
+    };
+    const nextLines = lines.map((line) =>
+      line.id === createDraft.line.id ? { ...line, fanchant } : line
+    );
+    setLines(nextLines);
+    setLrcText(serializeLrc(nextLines));
+    setCreateDraft(null);
+    setCreateError(null);
+  }, [createDraft, createMode, customFanchant, lines]);
+
+  const selectionStartMs = createDraft
+    ? createDraft.line.startTime + createDraft.startOffset
+    : 0;
+  const selectionDuration = createDraft
+    ? Math.max(createDraft.endOffset - createDraft.startOffset, 1)
+    : 0;
+  const createConfirmDisabled = createMode === 'custom' && customFanchant.trim().length === 0;
+
   return (
     <div className="relative min-h-screen overflow-hidden" style={{ background: 'var(--app-bg)' }}>
       <div
@@ -195,29 +339,31 @@ export default function Home() {
 
       <div className="fixed left-0 right-0 top-0 z-50">
         <div className="pt-[env(safe-area-inset-top)]">
-          <div className="glass-panel mx-auto flex w-full max-w-7xl items-center justify-between gap-4 px-6 py-3">
-            <div className="flex items-center gap-4">
-              <span className="chip rounded-full px-4 py-1.5 text-sm font-semibold uppercase tracking-[0.2em]">
-                {isPlaying ? '播放中' : '暂停'}
-              </span>
-              <div className="flex flex-col">
-                <span className="text-sm font-semibold text-[color:var(--text-primary)]">
-                  {trackInfo.title}
+          <div className="mx-auto w-full max-w-7xl px-6">
+            <div className="glass-panel flex w-full items-center justify-between gap-4 px-6 py-3">
+              <div className="flex items-center gap-4">
+                <span className="chip rounded-full px-4 py-1.5 text-sm font-semibold uppercase tracking-[0.2em]">
+                  {isPlaying ? '播放中' : '暂停'}
                 </span>
-                <span className="text-xs text-[color:var(--text-muted)]">
-                  {trackInfo.artist} · {trackInfo.album}
-                </span>
+                <div className="flex flex-col">
+                  <span className="text-sm font-semibold text-[color:var(--text-primary)]">
+                    {trackInfo.title}
+                  </span>
+                  <span className="text-xs text-[color:var(--text-muted)]">
+                    {trackInfo.artist} · {trackInfo.album}
+                  </span>
+                </div>
               </div>
+              <span ref={progressLabelRef} className="text-xs text-[color:var(--text-muted)]">
+                0.00 / --
+              </span>
             </div>
-            <span ref={progressLabelRef} className="text-xs text-[color:var(--text-muted)]">
-              0.00 / --
-            </span>
-          </div>
-          <div className="h-1 w-full bg-[color:var(--panel-border-subtle)]">
-            <div
-              ref={progressBarRef}
-              className="h-full w-0 bg-gradient-to-r from-[color:var(--sunset-500)] via-[color:var(--amber-400)] to-[color:var(--teal-500)] transition-[width] duration-150 ease-linear"
-            />
+            <div className="h-1 w-full bg-[color:var(--panel-border-subtle)]">
+              <div
+                ref={progressBarRef}
+                className="h-full w-0 bg-gradient-to-r from-[color:var(--sunset-500)] via-[color:var(--amber-400)] to-[color:var(--teal-500)] transition-[width] duration-150 ease-linear"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -262,7 +408,7 @@ export default function Home() {
 
           <div className="flex flex-wrap items-center gap-3">
             <div className="glass-subtle inline-flex items-center gap-1 rounded-full p-1 text-xs">
-              {(['memory', 'recite'] as GameMode[]).map((option) => (
+              {(['memory', 'recite'] as Exclude<GameMode, 'edit'>[]).map((option) => (
                 <button
                   key={option}
                   type="button"
@@ -277,6 +423,17 @@ export default function Home() {
                 </button>
               ))}
             </div>
+            <button
+              type="button"
+              onClick={handleEditToggle}
+              className={`rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] transition ${
+                mode === 'edit'
+                  ? 'bg-emerald-600 text-white shadow-lg hover:bg-emerald-500'
+                  : 'glass-subtle text-[color:var(--text-primary)] hover:-translate-y-0.5 hover:shadow-lg'
+              }`}
+            >
+              {mode === 'edit' ? '退出编辑' : '编辑'}
+            </button>
           </div>
         </header>
 
@@ -323,6 +480,7 @@ export default function Home() {
               <ul className="mt-3 space-y-2 text-xs text-[color:var(--text-muted)]">
                 <li>记忆模式：听到时间点时点击对应行。</li>
                 <li>跟唱模式：长按拖拽选中应援词。</li>
+                <li>编辑模式：可新增、覆盖、补全应援词。</li>
                 <li>解析后可立即切换模式练习。</li>
               </ul>
             </div>
@@ -334,11 +492,19 @@ export default function Home() {
               <span className="text-xs text-[color:var(--text-soft)]">
                 {mode === 'memory'
                   ? '点击歌词定位节奏'
-                  : '拖拽选中歌词以显示应援'}
+                  : mode === 'recite'
+                    ? '拖拽选中歌词以显示应援'
+                    : '选中歌词并编辑应援词'}
               </span>
             </div>
             <div className="flex-1 min-h-0">
-              <LyricsView lines={lines} timeRef={timeRef} onSeek={seek} mode={mode} />
+              <LyricsView
+                lines={lines}
+                timeRef={timeRef}
+                onSeek={seek}
+                mode={mode}
+                onCreateSelection={handleCreateSelection}
+              />
             </div>
           </div>
         </section>
@@ -360,7 +526,7 @@ export default function Home() {
                   把应援练到肌肉记忆
                 </h2>
                 <p className="mt-2 text-sm text-[color:var(--text-muted)]">
-                  三步开始：导入音频、粘贴 LRC、选择练习模式。所有进度都会在右侧舞台同步显示。
+                  三步开始：导入音频、粘贴 LRC、选择练习或编辑模式。所有进度都会在右侧舞台同步显示。
                 </p>
               </div>
 
@@ -368,7 +534,7 @@ export default function Home() {
                 {[
                   { title: '导入音频', desc: '上传歌曲或练习片段，立刻同步时间轴。' },
                   { title: '粘贴 LRC', desc: '支持时间戳 + 应援标记，解析后可即时预览。' },
-                  { title: '切换模式', desc: '记忆点击 / 跟唱拖选，两种练习节奏。' },
+                  { title: '切换模式', desc: '记忆点击 / 跟唱拖选 / 编辑应援。' },
                 ].map((step, index) => (
                   <div
                     key={step.title}
@@ -410,6 +576,152 @@ export default function Home() {
                     进入练习
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showWordTagNotice ? (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-[color:var(--overlay-bg)] px-6 py-10 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="glass-panel w-full max-w-lg rounded-[28px] p-6 shadow-2xl">
+            <div className="flex flex-col gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--text-soft)]">
+                  注意
+                </p>
+                <h3 className="mt-2 text-lg font-semibold">需要逐词歌词标签</h3>
+                <p className="mt-2 text-sm text-[color:var(--text-muted)]">
+                  当前 LRC 中未检测到 [tt] 逐词标记。请先找到带逐词时间的歌词，再进行应援编辑。
+                </p>
+              </div>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowWordTagNotice(false)}
+                  className="rounded-full bg-slate-900 px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white hover:bg-slate-800"
+                >
+                  知道了
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {createDraft ? (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-[color:var(--overlay-bg)] px-6 py-10 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="glass-panel w-full max-w-2xl rounded-[32px] p-7 shadow-2xl">
+            <div className="flex flex-col gap-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.3em] text-[color:var(--text-soft)]">
+                    应援编辑
+                  </p>
+                  <h3 className="mt-2 text-xl font-semibold">填写应援词信息</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeCreateModal}
+                  className="rounded-full border border-[color:var(--panel-border-subtle)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)] hover:border-slate-400"
+                >
+                  关闭
+                </button>
+              </div>
+
+              <div className="rounded-2xl border border-[color:var(--panel-border-subtle)] bg-[color:var(--panel-bg-subtle)] p-4 text-xs text-[color:var(--text-muted)]">
+                <p>
+                  歌词行：<span className="text-[color:var(--text-primary)]">{createDraft.line.text}</span>
+                </p>
+                <p className="mt-2">
+                  已选词：<span className="text-[color:var(--text-primary)]">{createDraft.selectedText}</span>
+                </p>
+                <p className="mt-2">
+                  起始时间：{formatMs(selectionStartMs)}s · 时长：{formatMs(selectionDuration)}s
+                </p>
+              </div>
+
+              <div className="grid gap-3 text-xs">
+                {[
+                  { key: 'repeat', label: '重复', desc: '自动使用选中的歌词' },
+                  { key: 'custom', label: '自定义', desc: '输入你想要的应援词' },
+                  { key: 'cheer', label: '欢呼', desc: '标记为欢呼段落' },
+                ].map((option) => (
+                  <label
+                    key={option.key}
+                    className={`flex cursor-pointer items-center justify-between gap-4 rounded-2xl border px-4 py-3 transition ${
+                      createMode === option.key
+                        ? 'border-emerald-300 bg-emerald-50'
+                        : 'border-[color:var(--panel-border-subtle)] bg-[color:var(--panel-bg-subtle)]'
+                    }`}
+                  >
+                    <div>
+                      <p className="text-sm font-semibold text-[color:var(--text-primary)]">
+                        {option.label}
+                      </p>
+                      <p className="mt-1 text-xs text-[color:var(--text-muted)]">{option.desc}</p>
+                    </div>
+                    <input
+                      type="radio"
+                      name="createMode"
+                      value={option.key}
+                      checked={createMode === option.key}
+                      onChange={() => {
+                        setCreateMode(option.key as 'repeat' | 'custom' | 'cheer');
+                        setCreateError(null);
+                      }}
+                      className="h-4 w-4 accent-emerald-500"
+                    />
+                  </label>
+                ))}
+              </div>
+
+              {createMode === 'custom' ? (
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-semibold text-[color:var(--text-primary)]">
+                    自定义应援词
+                  </label>
+                  <input
+                    type="text"
+                    value={customFanchant}
+                    onChange={(event) => {
+                      setCustomFanchant(event.target.value);
+                      setCreateError(null);
+                    }}
+                    placeholder="例如：Let's go!"
+                    className="rounded-2xl border border-[color:var(--panel-border-subtle)] bg-[color:var(--panel-bg-subtle)] px-4 py-3 text-sm text-[color:var(--text-primary)] outline-none"
+                  />
+                </div>
+              ) : null}
+
+              {createError ? (
+                <p className="text-xs font-semibold text-rose-500">{createError}</p>
+              ) : null}
+
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeCreateModal}
+                  className="rounded-full border border-[color:var(--panel-border-subtle)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)] hover:border-slate-400"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={applyCreateFanchant}
+                  disabled={createConfirmDisabled}
+                  className="rounded-full bg-emerald-600 px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  保存修改
+                </button>
               </div>
             </div>
           </div>

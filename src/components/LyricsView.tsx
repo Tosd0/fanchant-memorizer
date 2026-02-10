@@ -13,13 +13,19 @@ import { createPortal } from 'react-dom';
 import type { LyricLine } from '@/lib/lrc/types';
 import { useAudioStore } from '@/stores/audioStore';
 import { useGameStore, type GameMode, type GameResult } from '@/stores/gameStore';
-import { KaraokeLine, type KaraokeLineHandle, type ReciteProgress } from './KaraokeLine';
+import {
+  KaraokeLine,
+  type CreateSelection,
+  type KaraokeLineHandle,
+  type ReciteProgress,
+} from './KaraokeLine';
 
 interface LyricsViewProps {
   lines: LyricLine[];
   timeRef: MutableRefObject<number>;
   onSeek: (timeMs: number) => void;
   mode: GameMode;
+  onCreateSelection?: (selection: CreateSelection) => void;
 }
 
 type LineResultState = GameResult;
@@ -68,7 +74,7 @@ const findActiveIndex = (startTimes: number[], timeMs: number) => {
   return best;
 };
 
-export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) => {
+export const LyricsView = ({ lines, timeRef, onSeek, mode, onCreateSelection }: LyricsViewProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const lineRefs = useRef<(KaraokeLineHandle | null)[]>([]);
   const activeIndexRef = useRef(0);
@@ -422,7 +428,7 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
 
       updateRevealedUpTo(timeMs, forceRevealReset);
 
-      if (mode !== 'memory' && fanchantIndex.length > 0) {
+      if (mode === 'recite' && fanchantIndex.length > 0) {
         let cursor = pendingIndexRef.current;
         while (cursor < fanchantIndex.length) {
           const { line } = fanchantIndex[cursor];
@@ -553,7 +559,12 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
             {lines.map((line, index) => {
               const lineState = lineResults[line.id];
               const revealAnswer = mode !== 'memory' && Boolean(lineState);
-              const showFanchant = mode === 'recite' ? false : Boolean(revealedFanchants[line.id]);
+              const showFanchant =
+                mode === 'recite'
+                  ? false
+                  : mode === 'edit'
+                    ? Boolean(line.fanchant)
+                    : Boolean(revealedFanchants[line.id]);
 
               return (
                 <KaraokeLine
@@ -569,6 +580,7 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode }: LyricsViewProps) =>
                   onSeek={onSeek}
                   onReciteProgress={handleReciteProgress}
                   onReciteCheerMark={handleReciteCheerMark}
+                  onCreateSelection={onCreateSelection}
                   timeRef={timeRef}
                   result={lineState ?? null}
                   revealAnswer={revealAnswer}

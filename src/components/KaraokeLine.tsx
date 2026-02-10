@@ -35,6 +35,16 @@ export interface ReciteProgress {
   timingWindow?: { start: number; end: number } | null;
 }
 
+export interface CreateSelection {
+  line: LyricLine;
+  lineIndex: number;
+  selectedIndices: number[];
+  selectedText: string;
+  startOffset: number;
+  endOffset: number;
+  totalUnits: number;
+}
+
 interface KaraokeLineProps {
   line: LyricLine;
   lineIndex: number;
@@ -48,6 +58,7 @@ interface KaraokeLineProps {
   result?: GameResult | null;
   revealAnswer?: boolean;
   showFanchant?: boolean;
+  onCreateSelection?: (selection: CreateSelection) => void;
 }
 
 interface WordUnit {
@@ -182,6 +193,7 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
       onSeek,
       onReciteProgress,
       onReciteCheerMark,
+      onCreateSelection,
       timeRef,
       result,
       revealAnswer,
@@ -195,6 +207,7 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
       [line.text, wordTags]
     );
     const isCheer = line.fanchant?.type === 'cheer';
+    const isEditMode = mode === 'edit';
 
     const [selectedUnits, setSelectedUnits] = useState<boolean[]>(() =>
       Array(units.length).fill(false)
@@ -475,8 +488,10 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
       [computeWidthForOffset, endTime, graphemes.length, line.fanchant, line.startTime, measure, positionFanchant, setWidth, units.length]
     );
 
-    const canSelect = mode === 'recite' && !result;
+    const hasWordTags = line.words.length > 0;
+    const canSelect = (mode === 'recite' && !result) || (isEditMode && hasWordTags);
     const showReciteActions = mode === 'recite' && isActive;
+    const showEditActions = isEditMode;
     const actionsLocked = Boolean(result);
 
     useImperativeHandle(
@@ -570,6 +585,17 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
       onSeek(line.startTime);
     }, [line.startTime, mode, onSeek]);
 
+    const clearSelection = useCallback(() => {
+      setSelectedUnits(Array(units.length).fill(false));
+      setSelectionSource(null);
+      setPressTimingStatus(null);
+      pressCompletedAtRef.current = null;
+      pressSelectingRef.current = false;
+      pressBaseSelectionRef.current = [];
+      completedAtRef.current = null;
+      selectingRef.current = false;
+    }, [units.length]);
+
     const selectUnit = useCallback((index: number) => {
       setSelectedUnits((prev) => {
         if (prev[index]) return prev;
@@ -650,6 +676,55 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
       [canSelect, totalUnits]
     );
 
+    const handleClearSelection = useCallback(
+      (event: ReactMouseEvent<HTMLButtonElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!showEditActions) return;
+        clearSelection();
+      },
+      [clearSelection, showEditActions]
+    );
+
+    const handleCreateConfirm = useCallback(
+      (event: ReactMouseEvent<HTMLButtonElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!onCreateSelection || !hasWordTags) return;
+        const selectedIndices = selectedUnits
+          .map((selected, index) => (selected ? index : -1))
+          .filter((index) => index >= 0);
+        if (selectedIndices.length === 0) return;
+        const startOffset = Math.min(
+          ...selectedIndices.map((index) => startOffsets[index] ?? 0)
+        );
+        const endOffset = Math.max(
+          ...selectedIndices.map((index) => endOffsets[index] ?? startOffsets[index] ?? 0)
+        );
+        const selectedText = selectedIndices.map((index) => units[index]?.text ?? '').join('');
+        onCreateSelection({
+          line,
+          lineIndex,
+          selectedIndices,
+          selectedText,
+          startOffset,
+          endOffset: Math.max(endOffset, startOffset + 1),
+          totalUnits,
+        });
+      },
+      [
+        endOffsets,
+        hasWordTags,
+        line,
+        lineIndex,
+        onCreateSelection,
+        selectedUnits,
+        startOffsets,
+        totalUnits,
+        units,
+      ]
+    );
+
     const handleCheerMark = useCallback(
       (event: ReactMouseEvent<HTMLButtonElement>) => {
         event.preventDefault();
@@ -718,6 +793,35 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
               全选
             </button>
           </>
+        ) : null}
+        {showEditActions ? (
+          <>
+            <button
+              type="button"
+              aria-label="Clear selection"
+              onClick={handleClearSelection}
+              disabled={!hasSelection}
+              style={{ zIndex: 20 }}
+              className="absolute left-4 top-4 rounded-full border border-[color:var(--lyric-action-border)] bg-[color:var(--lyric-action-bg)] px-3 py-1 text-xs font-semibold text-[color:var(--text-muted)] shadow-sm transition hover:bg-[color:var(--lyric-bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              重选
+            </button>
+            <button
+              type="button"
+              aria-label="Confirm fanchant selection"
+              onClick={handleCreateConfirm}
+              disabled={!hasSelection || !hasWordTags}
+              style={{ zIndex: 20 }}
+              className="absolute right-4 top-4 rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              完成
+            </button>
+          </>
+        ) : null}
+        {showEditActions && !hasWordTags ? (
+          <span className="absolute right-4 top-12 text-[11px] font-semibold text-amber-600">
+            缺少 [tt] 逐词标签
+          </span>
         ) : null}
         <div ref={bodyRef} className="relative z-0 w-full">
           <div

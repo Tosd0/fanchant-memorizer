@@ -50,7 +50,9 @@ const parseWordTags = (payload: string): WordTag[] => {
   return tags;
 };
 
-type ParsedFanchant = Omit<FanchantTag, 'endTime' | 'fullLine'> & { autoDuration: boolean };
+type ParsedFanchant = Pick<FanchantTag, 'content' | 'duration' | 'type'> & {
+  autoDuration: boolean;
+};
 
 const parseFanchantTag = (payload: string): ParsedFanchant | null => {
   const match = payload.match(/<\s*([^>]*)\s*>/);
@@ -129,6 +131,7 @@ export const parseLrc = (input: string): LyricLine[] => {
           startTime,
           endTime: startTime + fanchant.duration,
           fullLine: false,
+          ...(fanchant.autoDuration ? { autoDuration: true } : {}),
         };
         if (fanchant.autoDuration) {
           autoDurationFanchants.push({ id: target.id, startTime });
@@ -168,14 +171,18 @@ export const parseLrc = (input: string): LyricLine[] => {
       if (!line.fanchant || startTime === undefined) return;
       const nextStart = sorted[index + 1]?.startTime ?? line.startTime + 2000;
       const wordOffset = line.words.reduce((max, word) => Math.max(max, word.offset), -1);
-      const lineEnd =
+      const roughLineEnd =
         wordOffset >= 0
           ? Math.max(line.startTime + wordOffset, line.startTime + 400)
           : Math.max(nextStart, line.startTime + 400);
+      // When a fanchant starts at the final word boundary, extend to the sentence tail.
+      const lineEnd =
+        roughLineEnd <= startTime ? Math.max(nextStart, startTime + 400) : roughLineEnd;
       const duration = Math.max(lineEnd - startTime, 1);
       line.fanchant.duration = duration;
       line.fanchant.endTime = startTime + duration;
       line.fanchant.fullLine = startTime === line.startTime;
+      line.fanchant.autoDuration = true;
     });
   }
   return sorted;
