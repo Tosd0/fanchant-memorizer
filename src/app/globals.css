@@ -31,6 +31,17 @@
   --lyric-word-selected-ring: rgba(255, 107, 74, 0.45);
   --lyric-action-bg: rgba(255, 255, 255, 0.85);
   --lyric-action-border: rgba(226, 232, 240, 0.9);
+  --btn-solid-bg: #0f172a;
+  --btn-solid-bg-hover: #1f2937;
+  --btn-solid-text: #ffffff;
+  --btn-soft-border: rgba(148, 163, 184, 0.45);
+  --btn-soft-border-hover: rgba(100, 116, 139, 0.7);
+  --accent-bg: #059669;
+  --accent-bg-hover: #047857;
+  --accent-text: #ffffff;
+  --accent-soft-bg: rgba(16, 185, 129, 0.14);
+  --accent-soft-border: rgba(16, 185, 129, 0.36);
+  --accent-soft-text: #065f46;
 }
 
 @theme inline {
@@ -78,6 +89,17 @@ body {
   --lyric-word-selected-ring: rgba(255, 107, 74, 0.45);
   --lyric-action-bg: rgba(15, 23, 42, 0.9);
   --lyric-action-border: rgba(71, 85, 105, 0.6);
+  --btn-solid-bg: #e2e8f0;
+  --btn-solid-bg-hover: #f8fafc;
+  --btn-solid-text: #0f172a;
+  --btn-soft-border: rgba(148, 163, 184, 0.45);
+  --btn-soft-border-hover: rgba(203, 213, 225, 0.75);
+  --accent-bg: #0f766e;
+  --accent-bg-hover: #0d9488;
+  --accent-text: #ecfeff;
+  --accent-soft-bg: rgba(20, 184, 166, 0.22);
+  --accent-soft-border: rgba(94, 234, 212, 0.45);
+  --accent-soft-text: #99f6e4;
 }
 
 .font-display {

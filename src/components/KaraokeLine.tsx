@@ -812,7 +812,7 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
               onClick={handleCreateConfirm}
               disabled={!hasSelection || !hasWordTags}
               style={{ zIndex: 20 }}
-              className="absolute right-4 top-4 rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+              className="absolute right-4 top-4 rounded-full border border-[color:var(--accent-soft-border)] bg-[color:var(--accent-soft-bg)] px-3 py-1 text-xs font-semibold text-[color:var(--accent-soft-text)] shadow-sm transition hover:bg-[color:var(--accent-bg)] hover:text-[color:var(--accent-text)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               完成
             </button>

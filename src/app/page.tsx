@@ -415,7 +415,7 @@ export default function Home() {
                   onClick={() => handleModeChange(option)}
                   className={`rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] transition ${
                     mode === option
-                      ? 'bg-slate-900 text-white shadow-lg'
+                      ? 'bg-[color:var(--btn-solid-bg)] text-[color:var(--btn-solid-text)] shadow-lg'
                       : 'text-[color:var(--text-soft)] hover:text-[color:var(--text-primary)]'
                   }`}
                 >
@@ -428,7 +428,7 @@ export default function Home() {
               onClick={handleEditToggle}
               className={`rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] transition ${
                 mode === 'edit'
-                  ? 'bg-emerald-600 text-white shadow-lg hover:bg-emerald-500'
+                  ? 'bg-[color:var(--accent-bg)] text-[color:var(--accent-text)] shadow-lg hover:bg-[color:var(--accent-bg-hover)]'
                   : 'glass-subtle text-[color:var(--text-primary)] hover:-translate-y-0.5 hover:shadow-lg'
               }`}
             >
@@ -451,7 +451,7 @@ export default function Home() {
                   type="file"
                   accept="audio/*"
                   onChange={handleAudioChange}
-                  className="text-xs text-[color:var(--text-muted)] file:mr-3 file:rounded-full file:border-0 file:bg-slate-900 file:px-3 file:py-1 file:text-xs file:text-white hover:file:bg-slate-800"
+                  className="text-xs text-[color:var(--text-muted)] file:mr-3 file:rounded-full file:border-0 file:bg-[color:var(--btn-solid-bg)] file:px-3 file:py-1 file:text-xs file:text-[color:var(--btn-solid-text)] hover:file:bg-[color:var(--btn-solid-bg-hover)]"
                 />
                 <audio ref={audioRef} src={audioUrl ?? undefined} controls className="w-full" />
               </div>
@@ -463,7 +463,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={handleParse}
-                  className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-white hover:bg-slate-800"
+                  className="rounded-full bg-[color:var(--btn-solid-bg)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--btn-solid-text)] hover:bg-[color:var(--btn-solid-bg-hover)]"
                 >
                   Parse
                 </button>
@@ -564,14 +564,14 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => dismissIntro(false)}
-                    className="rounded-full border border-slate-300 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)] hover:border-slate-400"
+                    className="rounded-full border border-[color:var(--btn-soft-border)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)] hover:border-[color:var(--btn-soft-border-hover)]"
                   >
                     先看看界面
                   </button>
                   <button
                     type="button"
                     onClick={() => dismissIntro(rememberIntro)}
-                    className="rounded-full bg-slate-900 px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white hover:bg-slate-800"
+                    className="rounded-full bg-[color:var(--btn-solid-bg)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--btn-solid-text)] hover:bg-[color:var(--btn-solid-bg-hover)]"
                   >
                     进入练习
                   </button>
@@ -603,7 +603,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => setShowWordTagNotice(false)}
-                  className="rounded-full bg-slate-900 px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white hover:bg-slate-800"
+                  className="rounded-full bg-[color:var(--btn-solid-bg)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--btn-solid-text)] hover:bg-[color:var(--btn-solid-bg-hover)]"
                 >
                   知道了
                 </button>
@@ -631,7 +631,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={closeCreateModal}
-                  className="rounded-full border border-[color:var(--panel-border-subtle)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)] hover:border-slate-400"
+                  className="rounded-full border border-[color:var(--panel-border-subtle)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)] hover:border-[color:var(--btn-soft-border-hover)]"
                 >
                   关闭
                 </button>
@@ -659,7 +659,7 @@ export default function Home() {
                     key={option.key}
                     className={`flex cursor-pointer items-center justify-between gap-4 rounded-2xl border px-4 py-3 transition ${
                       createMode === option.key
-                        ? 'border-emerald-300 bg-emerald-50'
+                        ? 'border-[color:var(--accent-soft-border)] bg-[color:var(--accent-soft-bg)]'
                         : 'border-[color:var(--panel-border-subtle)] bg-[color:var(--panel-bg-subtle)]'
                     }`}
                   >
@@ -667,7 +667,15 @@ export default function Home() {
                       <p className="text-sm font-semibold text-[color:var(--text-primary)]">
                         {option.label}
                       </p>
-                      <p className="mt-1 text-xs text-[color:var(--text-muted)]">{option.desc}</p>
+                      <p
+                        className={`mt-1 text-xs ${
+                          createMode === option.key
+                            ? 'text-[color:var(--accent-soft-text)]'
+                            : 'text-[color:var(--text-muted)]'
+                        }`}
+                      >
+                        {option.desc}
+                      </p>
                     </div>
                     <input
                       type="radio"
@@ -696,7 +704,7 @@ export default function Home() {
                       setCustomFanchant(event.target.value);
                       setCreateError(null);
                     }}
-                    placeholder="例如：Let's go!"
+                    placeholder="如成员名、团名等"
                     className="rounded-2xl border border-[color:var(--panel-border-subtle)] bg-[color:var(--panel-bg-subtle)] px-4 py-3 text-sm text-[color:var(--text-primary)] outline-none"
                   />
                 </div>
@@ -710,7 +718,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={closeCreateModal}
-                  className="rounded-full border border-[color:var(--panel-border-subtle)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)] hover:border-slate-400"
+                  className="rounded-full border border-[color:var(--panel-border-subtle)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)] hover:border-[color:var(--btn-soft-border-hover)]"
                 >
                   取消
                 </button>
@@ -718,7 +726,7 @@ export default function Home() {
                   type="button"
                   onClick={applyCreateFanchant}
                   disabled={createConfirmDisabled}
-                  className="rounded-full bg-emerald-600 px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-full bg-[color:var(--accent-bg)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--accent-text)] hover:bg-[color:var(--accent-bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   保存修改
                 </button>
