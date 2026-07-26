@@ -20,5 +20,8 @@ export interface LyricLine {
   startTime: number; // ms
   text: string;
   words: WordTag[];
-  fanchant?: FanchantTag;
+  wordsEnd?: number; // ms offset of the line's end, from the [tt] trailing tag
+  translation?: string;
+  translationLang?: string;
+  fanchants: FanchantTag[];
 }
