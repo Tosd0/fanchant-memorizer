@@ -7,6 +7,7 @@ import type { CreateSelection } from '@/components/KaraokeLine';
 import { useAudioSync } from '@/hooks/useAudioSync';
 import { parseId3Tags } from '@/lib/audio/id3';
 import { parseLrc } from '@/lib/lrc/parseLrc';
+import { serializeLrc } from '@/lib/lrc/serializeLrc';
 import type { FanchantTag, LyricLine } from '@/lib/lrc/types';
 import { useAudioStore } from '@/stores/audioStore';
 import { useGameStore, type GameMode } from '@/stores/gameStore';
@@ -16,37 +17,6 @@ const sampleLrc = `[00:07.50] One look give'em whiplash
 [00:07.50] [fc] <repeat, yeah!, 1500>`;
 
 const formatMs = (ms: number) => (ms / 1000).toFixed(2);
-
-const formatLrcTimestamp = (ms: number) => {
-  const safeMs = Math.max(0, Math.floor(ms));
-  const minutes = Math.floor(safeMs / 60_000);
-  const seconds = Math.floor((safeMs % 60_000) / 1000);
-  const centiseconds = Math.floor((safeMs % 1000) / 10);
-  return `[${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(centiseconds).padStart(2, '0')}]`;
-};
-
-const serializeLrc = (lines: LyricLine[]) =>
-  lines
-    .flatMap((line) => {
-      const lyricTime = formatLrcTimestamp(line.startTime);
-      const rows = [`${lyricTime} ${line.text}`];
-      if (line.words.length > 0) {
-        const wordPayload = [...line.words]
-          .sort((a, b) => a.offset - b.offset)
-          .map((word) => `<${Math.max(0, Math.round(word.offset))},${Math.max(0, Math.round(word.charIndex))}>`)
-          .join(' ');
-        rows.push(`${lyricTime} [tt] ${wordPayload}`);
-      }
-      if (line.fanchant) {
-        const fcTime = formatLrcTimestamp(line.fanchant.startTime);
-        const durationPart = line.fanchant.autoDuration
-          ? ''
-          : `, ${Math.max(1, Math.round(line.fanchant.duration))}`;
-        rows.push(`${fcTime} [fc] <${line.fanchant.type}, ${line.fanchant.content}${durationPart}>`);
-      }
-      return rows;
-    })
-    .join('\n');
 
 const initialLines = parseLrc(sampleLrc);
 
@@ -78,6 +48,10 @@ export default function Home() {
   const [createMode, setCreateMode] = useState<'repeat' | 'custom' | 'cheer'>('repeat');
   const [customFanchant, setCustomFanchant] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
+  const [lrcNotice, setLrcNotice] = useState<{ tone: 'info' | 'error'; text: string } | null>(
+    null
+  );
+  const lrcFileInputRef = useRef<HTMLInputElement | null>(null);
   const timeLabelRef = useRef<HTMLSpanElement | null>(null);
   const progressBarRef = useRef<HTMLDivElement | null>(null);
   const progressLabelRef = useRef<HTMLSpanElement | null>(null);
@@ -108,26 +82,98 @@ export default function Home() {
 
   const { audioRef, timeRef, seek } = useAudioSync({ onFrame: handleFrame });
 
-  const handleParse = useCallback(() => {
-    const parsed = parseLrc(lrcText);
-    setLines(parsed);
-    resetScore();
-    setCreateDraft(null);
-    setCreateMode('repeat');
-    setCustomFanchant('');
-    setCreateError(null);
-    const nextHasTags = parsed.some((line) => line.words.length > 0);
-    setHasWordTags(nextHasTags);
-    if (!nextHasTags) {
-      setShowWordTagNotice(true);
-      if (mode === 'edit') {
-        setMode('memory');
+  const applyParsedLines = useCallback(
+    (parsed: LyricLine[]) => {
+      setLines(parsed);
+      resetScore();
+      setCreateDraft(null);
+      setCreateMode('repeat');
+      setCustomFanchant('');
+      setCreateError(null);
+      const nextHasTags = parsed.some((line) => line.words.length > 0);
+      setHasWordTags(nextHasTags);
+      if (!nextHasTags) {
+        setShowWordTagNotice(true);
+        if (mode === 'edit') {
+          setMode('memory');
+        }
+      } else {
+        setShowWordTagNotice(false);
       }
-    } else {
-      setShowWordTagNotice(false);
-    }
-    console.info('Parsed LRC', parsed);
-  }, [lrcText, mode, resetScore, setMode]);
+      const fanchantCount = parsed.reduce((total, line) => total + line.fanchants.length, 0);
+      const translationCount = parsed.filter((line) => line.translation).length;
+      setLrcNotice(
+        parsed.length === 0
+          ? { tone: 'error', text: '未解析出歌词行，请检查 LRC 内容。' }
+          : {
+              tone: 'info',
+              text: `已解析 ${parsed.length} 行歌词 · ${fanchantCount} 条应援${
+                translationCount > 0 ? ` · ${translationCount} 条翻译` : ''
+              }`,
+            }
+      );
+      console.info('Parsed LRC', parsed);
+    },
+    [mode, resetScore, setMode]
+  );
+
+  const handleParse = useCallback(() => {
+    applyParsedLines(parseLrc(lrcText));
+  }, [applyParsedLines, lrcText]);
+
+  const loadLrcText = useCallback(
+    (text: string) => {
+      setLrcText(text);
+      applyParsedLines(parseLrc(text));
+    },
+    [applyParsedLines]
+  );
+
+  const handleLrcFileChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = '';
+      if (!file) return;
+      file
+        .text()
+        .then((text) => loadLrcText(text))
+        .catch(() => {
+          setLrcNotice({ tone: 'error', text: '读取歌词文件失败，请重试。' });
+        });
+    },
+    [loadLrcText]
+  );
+
+  const handleLoadSample = useCallback(() => {
+    fetch('/whatislove.lrc')
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.text();
+      })
+      .then((text) => loadLrcText(text))
+      .catch(() => {
+        setLrcNotice({ tone: 'error', text: '示例歌词加载失败，请刷新后重试。' });
+      });
+  }, [loadLrcText]);
+
+  const handleExportLrc = useCallback(() => {
+    if (lines.length === 0) return;
+    const content = `${serializeLrc(lines)}\n`;
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    const safeTitle = trackInfo.title
+      .replace(/[\\/:*?"<>|]/g, '')
+      .trim();
+    anchor.href = url;
+    anchor.download = `${
+      safeTitle && trackInfo.title !== fallbackTrackInfo.title ? safeTitle : 'fanchant'
+    }.lrc`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }, [lines, trackInfo.title]);
 
   const handleModeChange = useCallback(
     (nextMode: Exclude<GameMode, 'edit'>) => {
@@ -302,9 +348,16 @@ export default function Home() {
       fullLine: createDraft.selectedIndices.length === createDraft.totalUnits,
       ...(useAutoDuration ? { autoDuration: true } : {}),
     };
-    const nextLines = lines.map((line) =>
-      line.id === createDraft.line.id ? { ...line, fanchant } : line
-    );
+    const nextLines = lines.map((line) => {
+      if (line.id !== createDraft.line.id) return line;
+      // Replace fanchants that overlap the new window; keep the rest of the line's chants.
+      const kept = line.fanchants.filter(
+        (existing) =>
+          existing.endTime <= fanchant.startTime || existing.startTime >= fanchant.endTime
+      );
+      const nextFanchants = [...kept, fanchant].sort((a, b) => a.startTime - b.startTime);
+      return { ...line, fanchants: nextFanchants };
+    });
     setLines(nextLines);
     setLrcText(serializeLrc(nextLines));
     setCreateDraft(null);
@@ -468,6 +521,46 @@ export default function Home() {
                   Parse
                 </button>
               </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <input
+                  ref={lrcFileInputRef}
+                  type="file"
+                  accept=".lrc,.txt,text/plain"
+                  onChange={handleLrcFileChange}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => lrcFileInputRef.current?.click()}
+                  className="rounded-full border border-[color:var(--btn-soft-border)] px-3 py-1 text-xs font-semibold text-[color:var(--text-muted)] transition hover:border-[color:var(--btn-soft-border-hover)] hover:text-[color:var(--text-primary)]"
+                >
+                  导入 .lrc
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLoadSample}
+                  className="rounded-full border border-[color:var(--btn-soft-border)] px-3 py-1 text-xs font-semibold text-[color:var(--text-muted)] transition hover:border-[color:var(--btn-soft-border-hover)] hover:text-[color:var(--text-primary)]"
+                >
+                  载入示例
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportLrc}
+                  disabled={lines.length === 0}
+                  className="rounded-full border border-[color:var(--btn-soft-border)] px-3 py-1 text-xs font-semibold text-[color:var(--text-muted)] transition hover:border-[color:var(--btn-soft-border-hover)] hover:text-[color:var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  导出 .lrc
+                </button>
+              </div>
+              {lrcNotice ? (
+                <p
+                  className={`mt-2 text-xs font-semibold ${
+                    lrcNotice.tone === 'error' ? 'text-rose-500' : 'text-emerald-600'
+                  }`}
+                >
+                  {lrcNotice.text}
+                </p>
+              ) : null}
               <textarea
                 value={lrcText}
                 onChange={(event) => setLrcText(event.target.value)}
@@ -478,10 +571,11 @@ export default function Home() {
             <div className="glass-panel animate-fade-up rounded-3xl p-5" style={{ animationDelay: '180ms' }}>
               <h3 className="text-sm font-semibold text-[color:var(--text-primary)]">提示</h3>
               <ul className="mt-3 space-y-2 text-xs text-[color:var(--text-muted)]">
+                <li>可导入原 .lrc 歌词文件，[fc] 应援标记自动解析。</li>
                 <li>记忆模式：听到时间点时点击对应行。</li>
                 <li>跟唱模式：长按拖拽选中应援词。</li>
                 <li>编辑模式：可新增、覆盖、补全应援词。</li>
-                <li>解析后可立即切换模式练习。</li>
+                <li>编辑完成后可导出 .lrc 保存应援标记。</li>
               </ul>
             </div>
           </div>
@@ -533,8 +627,8 @@ export default function Home() {
               <div className="grid gap-4 md:grid-cols-3">
                 {[
                   { title: '导入音频', desc: '上传歌曲或练习片段，立刻同步时间轴。' },
-                  { title: '粘贴 LRC', desc: '支持时间戳 + 应援标记，解析后可即时预览。' },
-                  { title: '切换模式', desc: '记忆点击 / 跟唱拖选 / 编辑应援。' },
+                  { title: '导入歌词', desc: '上传原 .lrc 文件或粘贴文本，[tt]/[fc]/[tr] 标记自动解析。' },
+                  { title: '切换模式', desc: '记忆点击 / 跟唱拖选 / 编辑应援，改完可导出 .lrc。' },
                 ].map((step, index) => (
                   <div
                     key={step.title}

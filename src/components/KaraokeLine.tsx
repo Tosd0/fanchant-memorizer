@@ -13,7 +13,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { LyricLine, WordTag } from '@/lib/lrc/types';
+import type { FanchantTag, LyricLine, WordTag } from '@/lib/lrc/types';
 import type { GameMode, GameResult } from '@/stores/gameStore';
 
 export interface KaraokeLineHandle {
@@ -57,7 +57,7 @@ interface KaraokeLineProps {
   timeRef?: MutableRefObject<number>;
   result?: GameResult | null;
   revealAnswer?: boolean;
-  showFanchant?: boolean;
+  fanchantVisibility?: boolean[];
   onCreateSelection?: (selection: CreateSelection) => void;
 }
 
@@ -152,13 +152,6 @@ const findLastTagIndex = (tags: WordTag[], elapsed: number) => {
   return best;
 };
 
-const findWordIndex = (units: WordUnit[], charIndex: number) => {
-  for (let i = units.length - 1; i >= 0; i -= 1) {
-    if (charIndex >= units[i].start) return i;
-  }
-  return -1;
-};
-
 const buildUnitOffsets = (
   units: WordUnit[],
   wordTags: WordTag[],
@@ -197,7 +190,7 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
       timeRef,
       result,
       revealAnswer,
-      showFanchant,
+      fanchantVisibility,
     },
     ref
   ) => {
@@ -206,7 +199,11 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
       () => splitWordUnits(line.text, wordTags),
       [line.text, wordTags]
     );
-    const isCheer = line.fanchant?.type === 'cheer';
+    const fanchants = line.fanchants;
+    const cheerFanchant = useMemo(
+      () => fanchants.find((fc) => fc.type === 'cheer') ?? null,
+      [fanchants]
+    );
     const isEditMode = mode === 'edit';
 
     const [selectedUnits, setSelectedUnits] = useState<boolean[]>(() =>
@@ -226,7 +223,7 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
     const textRef = useRef<HTMLDivElement>(null);
     const bodyRef = useRef<HTMLDivElement>(null);
     const underlineRef = useRef<HTMLDivElement>(null);
-    const fanchantRef = useRef<HTMLDivElement>(null);
+    const fanchantRefs = useRef<(HTMLDivElement | null)[]>([]);
     const wordRefs = useRef<(HTMLSpanElement | null)[]>([]);
     const metricsRef = useRef<{
       textLeft: number;
@@ -249,15 +246,17 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
     );
 
     const requiredMask = useMemo(() => {
-      if (!line.fanchant) return Array(totalUnits).fill(false);
-      if (line.fanchant.fullLine) return Array(totalUnits).fill(true);
-      const startOffset = line.fanchant.startTime - line.startTime;
-      const endOffset = line.fanchant.endTime - line.startTime;
+      if (fanchants.length === 0) return Array(totalUnits).fill(false);
+      if (fanchants.some((fc) => fc.fullLine)) return Array(totalUnits).fill(true);
+      const windows = fanchants.map((fc) => ({
+        start: fc.startTime - line.startTime,
+        end: fc.endTime - line.startTime,
+      }));
       return startOffsets.map((start, index) => {
         const end = endOffsets[index] ?? start;
-        return end > startOffset && start < endOffset;
+        return windows.some((window) => end > window.start && start < window.end);
       });
-    }, [endOffsets, line.fanchant, line.startTime, startOffsets, totalUnits]);
+    }, [endOffsets, fanchants, line.startTime, startOffsets, totalUnits]);
 
     const totalRequired = useMemo(
       () => requiredMask.reduce((total, value) => total + (value ? 1 : 0), 0),
@@ -404,19 +403,21 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
     );
 
     const positionFanchant = useCallback(() => {
-      if (!fanchantRef.current || !line.fanchant) return;
-      const startOffset = line.fanchant.startTime - line.startTime;
-      const endOffset = line.fanchant.endTime - line.startTime;
-      if (isCheer || line.fanchant.fullLine) {
-        const { textLeft, textWidth } = metricsRef.current;
-        const baseX = textLeft + textWidth / 2;
-        fanchantRef.current.style.transform = `translateX(${baseX}px) translateX(-50%)`;
-        return;
-      }
-      const anchor = computeWidthForOffset(startOffset);
-      const baseX = anchor.left + anchor.width;
-      fanchantRef.current.style.transform = `translateX(${baseX}px)`;
-    }, [computeWidthForOffset, isCheer, line.fanchant, line.startTime]);
+      fanchants.forEach((fanchant, index) => {
+        const node = fanchantRefs.current[index];
+        if (!node) return;
+        if (fanchant.type === 'cheer' || fanchant.fullLine) {
+          const { textLeft, textWidth } = metricsRef.current;
+          const baseX = textLeft + textWidth / 2;
+          node.style.transform = `translateX(${baseX}px) translateX(-50%)`;
+          return;
+        }
+        const startOffset = fanchant.startTime - line.startTime;
+        const anchor = computeWidthForOffset(startOffset);
+        const baseX = anchor.left + anchor.width;
+        node.style.transform = `translateX(${baseX}px)`;
+      });
+    }, [computeWidthForOffset, fanchants, line.startTime]);
 
     const measure = useCallback(() => {
       const lineEl = bodyRef.current;
@@ -476,8 +477,8 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
         const { width, left } = computeWidthForOffset(elapsed);
         setWidth(width, left);
 
-        if (line.fanchant?.type === 'cheer') {
-          const hasStarted = timeMs >= line.fanchant.startTime;
+        if (cheerFanchant) {
+          const hasStarted = timeMs >= cheerFanchant.startTime;
           underlineRef.current.style.backgroundColor = hasStarted ? '#facc15' : '';
         } else {
           underlineRef.current.style.backgroundColor = '';
@@ -485,7 +486,7 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
 
         positionFanchant();
       },
-      [computeWidthForOffset, endTime, graphemes.length, line.fanchant, line.startTime, measure, positionFanchant, setWidth, units.length]
+      [cheerFanchant, computeWidthForOffset, graphemes.length, line.startTime, measure, positionFanchant, setWidth, units.length]
     );
 
     const hasWordTags = line.words.length > 0;
@@ -545,7 +546,7 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
           pressSelectingRef.current = false;
         },
         reset: () => {
-          setSelectedUnits(Array(units.length).fill(false));
+          setSelectedUnits(Array(totalUnits).fill(false));
           setSelectionSource(null);
           setPressTimingStatus(null);
           pressCompletedAtRef.current = null;
@@ -739,20 +740,21 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
       mode === 'recite' &&
       isComplete &&
       (!isPressSelection || pressTimingStatus === 'ok');
-    const showFanchantText =
-      mode === 'recite'
-        ? Boolean(result) || showInstantSuccess
-        : Boolean(showFanchant || revealAnswer);
+    const reciteReveal = Boolean(result) || showInstantSuccess;
+    const isFanchantVisible = (index: number) =>
+      mode === 'recite' ? reciteReveal : Boolean(revealAnswer || fanchantVisibility?.[index]);
 
-    const fanchantClass = isCheer
-      ? 'text-amber-500'
-      : mode === 'recite'
-        ? result === 'miss'
-          ? 'text-rose-500'
-          : 'text-emerald-600'
-        : 'text-emerald-600';
+    const fanchantClassFor = (type: FanchantTag['type']) =>
+      type === 'cheer'
+        ? 'text-amber-500'
+        : mode === 'recite'
+          ? result === 'miss'
+            ? 'text-rose-500'
+            : 'text-emerald-600'
+          : 'text-emerald-600';
 
-    const fanchantText = isCheer ? '[CHEER/欢呼]' : line.fanchant?.content ?? '';
+    const fanchantTextFor = (fanchant: FanchantTag) =>
+      fanchant.type === 'cheer' ? '[CHEER/欢呼]' : fanchant.content;
 
     const paddingClass = showReciteActions ? 'px-12' : 'px-6';
 
@@ -850,19 +852,27 @@ export const KaraokeLine = forwardRef<KaraokeLineHandle, KaraokeLineProps>(
               </span>
             ))}
           </div>
+          {line.translation ? (
+            <p className="mt-2 text-xs text-[color:var(--text-muted)]">{line.translation}</p>
+          ) : null}
           <div className="relative mx-auto mt-3 h-2 w-full">
             <div ref={underlineRef} className="absolute top-1 h-0.5 bg-emerald-500" style={{ width: 0 }} />
           </div>
           <div className="relative mx-auto mt-4 h-6 w-full">
-            <div
-              ref={fanchantRef}
-              style={isCheer ? { color: '#facc15' } : undefined}
-              className={`absolute left-0 text-lg font-semibold uppercase tracking-[0.3em] ${
-                fanchantClass
-              } ${showFanchantText ? 'opacity-100' : 'opacity-0'}`}
-            >
-              {fanchantText}
-            </div>
+            {fanchants.map((fanchant, index) => (
+              <div
+                key={`${line.id}-fc-${index}`}
+                ref={(node) => {
+                  fanchantRefs.current[index] = node;
+                }}
+                style={fanchant.type === 'cheer' ? { color: '#facc15' } : undefined}
+                className={`absolute left-0 whitespace-nowrap text-lg font-semibold uppercase tracking-[0.3em] ${fanchantClassFor(
+                  fanchant.type
+                )} ${isFanchantVisible(index) ? 'opacity-100' : 'opacity-0'}`}
+              >
+                {fanchantTextFor(fanchant)}
+              </div>
+            ))}
           </div>
         </div>
         {result === 'hit' ? <span aria-hidden="true" className="line-spark" /> : null}

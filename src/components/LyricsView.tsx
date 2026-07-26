@@ -37,23 +37,54 @@ const buildLineMeta = (lines: LyricLine[]) => {
   const endTimes = lines.map((line, index) => {
     const nextStart = lines[index + 1]?.startTime ?? line.startTime + 2000;
     const wordOffset = line.words.reduce((max, word) => Math.max(max, word.offset), -1);
-    if (wordOffset >= 0) {
-      return Math.max(line.startTime + wordOffset, line.startTime + 400);
+    const measuredEnd = line.wordsEnd ?? (wordOffset >= 0 ? wordOffset : -1);
+    if (measuredEnd >= 0) {
+      return Math.max(line.startTime + measuredEnd, line.startTime + 400);
     }
-    const fanchantEnd = line.fanchant?.endTime ?? 0;
+    const fanchantEnd = line.fanchants.reduce((max, fc) => Math.max(max, fc.endTime), 0);
     const fallback = Math.max(nextStart, fanchantEnd, line.startTime + 400);
     return fallback;
   });
   return { startTimes, endTimes };
 };
 
-const buildFanchantIndex = (lines: LyricLine[]) =>
+const fanchantKey = (lineId: string, fanchantIndex: number) => `${lineId}:${fanchantIndex}`;
+
+interface FanchantRevealEntry {
+  key: string;
+  revealAt: number;
+}
+
+// One entry per [fc] tag, so each fanchant reveals at its own start time.
+const buildRevealIndex = (lines: LyricLine[]): FanchantRevealEntry[] =>
   lines
-    .map((line, index) => (line.fanchant ? { line, index } : null))
-    .filter((entry): entry is { line: LyricLine; index: number } => Boolean(entry))
+    .flatMap((line) =>
+      line.fanchants.map((fc, fanchantIndex) => ({
+        key: fanchantKey(line.id, fanchantIndex),
+        revealAt: fc.startTime,
+      }))
+    )
+    .sort((a, b) => a.revealAt - b.revealAt);
+
+interface FanchantScoreEntry {
+  line: LyricLine;
+  index: number;
+  start: number; // earliest fanchant start on the line
+  end: number; // latest fanchant end on the line
+}
+
+// One entry per line with fanchants; recite results are scored per line.
+const buildScoreIndex = (lines: LyricLine[]): FanchantScoreEntry[] =>
+  lines
+    .map((line, index) => {
+      if (line.fanchants.length === 0) return null;
+      const start = Math.min(...line.fanchants.map((fc) => fc.startTime));
+      const end = Math.max(...line.fanchants.map((fc) => fc.endTime));
+      return { line, index, start, end };
+    })
+    .filter((entry): entry is FanchantScoreEntry => Boolean(entry))
     .sort((a, b) => {
-      const timeDiff = (a.line.fanchant?.startTime ?? a.line.startTime) -
-        (b.line.fanchant?.startTime ?? b.line.startTime);
+      const timeDiff = a.start - b.start;
       return timeDiff !== 0 ? timeDiff : a.index - b.index;
     });
 
@@ -105,7 +136,8 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode, onCreateSelection }: 
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
 
   const lineMeta = useMemo(() => buildLineMeta(lines), [lines]);
-  const fanchantIndex = useMemo(() => buildFanchantIndex(lines), [lines]);
+  const revealIndex = useMemo(() => buildRevealIndex(lines), [lines]);
+  const scoreIndex = useMemo(() => buildScoreIndex(lines), [lines]);
 
   useEffect(() => {
     lineRefs.current = Array(lines.length).fill(null);
@@ -169,22 +201,21 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode, onCreateSelection }: 
 
   const updateRevealedUpTo = useCallback(
     (timeMs: number, forceReset: boolean) => {
-      if (fanchantIndex.length === 0) return;
+      if (revealIndex.length === 0) return;
       if (forceReset) {
         const nextSet = new Set<string>();
         let cursor = 0;
-        while (cursor < fanchantIndex.length) {
-          const { line } = fanchantIndex[cursor];
-          const revealAt = line.fanchant?.startTime ?? line.startTime;
-          if (revealAt > timeMs) break;
-          nextSet.add(line.id);
+        while (cursor < revealIndex.length) {
+          const entry = revealIndex[cursor];
+          if (entry.revealAt > timeMs) break;
+          nextSet.add(entry.key);
           cursor += 1;
         }
         revealedRef.current = nextSet;
         revealCursorRef.current = cursor;
         setRevealedFanchants(
-          Array.from(nextSet).reduce<Record<string, boolean>>((acc, id) => {
-            acc[id] = true;
+          Array.from(nextSet).reduce<Record<string, boolean>>((acc, key) => {
+            acc[key] = true;
             return acc;
           }, {})
         );
@@ -193,13 +224,12 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode, onCreateSelection }: 
 
       let cursor = revealCursorRef.current;
       const added: string[] = [];
-      while (cursor < fanchantIndex.length) {
-        const { line } = fanchantIndex[cursor];
-        const revealAt = line.fanchant?.startTime ?? line.startTime;
-        if (revealAt > timeMs) break;
-        if (!revealedRef.current.has(line.id)) {
-          revealedRef.current.add(line.id);
-          added.push(line.id);
+      while (cursor < revealIndex.length) {
+        const entry = revealIndex[cursor];
+        if (entry.revealAt > timeMs) break;
+        if (!revealedRef.current.has(entry.key)) {
+          revealedRef.current.add(entry.key);
+          added.push(entry.key);
         }
         cursor += 1;
       }
@@ -207,12 +237,12 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode, onCreateSelection }: 
       if (added.length > 0) {
         setRevealedFanchants((prev) => {
           const next = { ...prev };
-          for (const id of added) next[id] = true;
+          for (const key of added) next[key] = true;
           return next;
         });
       }
     },
-    [fanchantIndex]
+    [revealIndex]
   );
 
   const handleReciteProgress = useCallback(
@@ -232,7 +262,7 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode, onCreateSelection }: 
         return;
       }
       if (resolvedProgress.timingStatus === 'pending') return;
-      if (!line.fanchant) {
+      if (line.fanchants.length === 0) {
         if (resolvedProgress.hasSelection) {
           setResult(line, 'miss');
         }
@@ -240,8 +270,10 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode, onCreateSelection }: 
       }
       if (!resolvedProgress.isComplete) return;
       const now = timeRef.current;
-      if (now < line.fanchant.startTime) return;
-      if (now > line.fanchant.endTime) return;
+      const windowStart = Math.min(...line.fanchants.map((fc) => fc.startTime));
+      const windowEnd = Math.max(...line.fanchants.map((fc) => fc.endTime));
+      if (now < windowStart) return;
+      if (now > windowEnd) return;
       setResult(line, 'hit');
     },
     [mode, setResult, timeRef]
@@ -251,7 +283,7 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode, onCreateSelection }: 
     (line: LyricLine) => {
       if (mode !== 'recite') return;
       if (lineResultsRef.current[line.id]) return;
-      const isCheer = line.fanchant?.type === 'cheer';
+      const isCheer = line.fanchants.some((fc) => fc.type === 'cheer');
       setResult(line, isCheer ? 'hit' : 'miss');
     },
     [mode, setResult]
@@ -321,16 +353,14 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode, onCreateSelection }: 
       lineRefs.current.forEach((lineRef) => {
         lineRef?.reset();
       });
-      if (fanchantIndex.length === 0) {
+      if (scoreIndex.length === 0) {
         pendingIndexRef.current = 0;
         return;
       }
-      const nextPending = fanchantIndex.findIndex(
-        ({ line }) => (line.fanchant?.endTime ?? line.startTime) >= timeMs
-      );
-      pendingIndexRef.current = nextPending === -1 ? fanchantIndex.length : nextPending;
+      const nextPending = scoreIndex.findIndex((entry) => entry.end >= timeMs);
+      pendingIndexRef.current = nextPending === -1 ? scoreIndex.length : nextPending;
     },
-    [fanchantIndex, resetScore]
+    [scoreIndex, resetScore]
   );
 
   const applyRecitePressInterval = useCallback(
@@ -428,10 +458,10 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode, onCreateSelection }: 
 
       updateRevealedUpTo(timeMs, forceRevealReset);
 
-      if (mode === 'recite' && fanchantIndex.length > 0) {
+      if (mode === 'recite' && scoreIndex.length > 0) {
         let cursor = pendingIndexRef.current;
-        while (cursor < fanchantIndex.length) {
-          const { line } = fanchantIndex[cursor];
+        while (cursor < scoreIndex.length) {
+          const { line, start, end } = scoreIndex[cursor];
           if (lineResultsRef.current[line.id]) {
             cursor += 1;
             continue;
@@ -447,22 +477,18 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode, onCreateSelection }: 
             if (timingStatus === 'pending') {
               break;
             }
-            if (
-              progress?.isComplete &&
-              timeMs >= line.fanchant!.startTime &&
-              timeMs <= line.fanchant!.endTime
-            ) {
+            if (progress?.isComplete && timeMs >= start && timeMs <= end) {
               setResult(line, 'hit');
               cursor += 1;
               continue;
             }
           }
-          if (timeMs > line.fanchant!.endTime) {
+          if (timeMs > end) {
             if (mode === 'recite') {
               const progress = reciteProgressRef.current[line.id];
               const timingStatus = progress?.timingStatus;
               const completedAt = progress?.completedAt;
-              const allowedEnd = progress?.timingWindow?.end ?? line.fanchant!.endTime;
+              const allowedEnd = progress?.timingWindow?.end ?? end;
               const isCompletionValid =
                 Boolean(progress?.isComplete) &&
                 typeof completedAt === 'number' &&
@@ -487,10 +513,10 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode, onCreateSelection }: 
       }
     },
     [
-      fanchantIndex,
       lineMeta.startTimes,
       lines.length,
       mode,
+      scoreIndex,
       scrollToLine,
       setResult,
       updateRevealedUpTo,
@@ -559,12 +585,14 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode, onCreateSelection }: 
             {lines.map((line, index) => {
               const lineState = lineResults[line.id];
               const revealAnswer = mode !== 'memory' && Boolean(lineState);
-              const showFanchant =
+              const fanchantVisibility =
                 mode === 'recite'
-                  ? false
+                  ? line.fanchants.map(() => false)
                   : mode === 'edit'
-                    ? Boolean(line.fanchant)
-                    : Boolean(revealedFanchants[line.id]);
+                    ? line.fanchants.map(() => true)
+                    : line.fanchants.map((_, fanchantIndex) =>
+                        Boolean(revealedFanchants[fanchantKey(line.id, fanchantIndex)])
+                      );
 
               return (
                 <KaraokeLine
@@ -584,7 +612,7 @@ export const LyricsView = ({ lines, timeRef, onSeek, mode, onCreateSelection }: 
                   timeRef={timeRef}
                   result={lineState ?? null}
                   revealAnswer={revealAnswer}
-                  showFanchant={showFanchant}
+                  fanchantVisibility={fanchantVisibility}
                 />
               );
             })}

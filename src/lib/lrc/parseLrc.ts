@@ -6,6 +6,7 @@ const metaTagRegex = /^\[[a-zA-Z]+:.*\]$/;
 const offsetTagRegex = /^\[offset:\s*(-?\d+)\s*\]$/i;
 const inlineMetaTagRegex = /\[(?:ar|al|ti|tr|by|offset):[^\]]*\]/gi;
 const metaLineContentRegex = /^\[(?:ar|al|ti|tr|by)\s*:[^\]]*\]/i;
+const translationContentRegex = /^\[tr(?::([^\]]*))?\]\s*(.*)$/i;
 
 const createId = (startTime: number, order: number) => `line_${startTime}_${order}`;
 
@@ -37,7 +38,7 @@ const parseTimeTags = (line: string) => {
   return times;
 };
 
-const parseWordTags = (payload: string): WordTag[] => {
+const parseWordTags = (payload: string): { tags: WordTag[]; end?: number } => {
   const tags: WordTag[] = [];
   const regex = /<\s*(\d+)\s*,\s*(\d+)\s*>/g;
   for (const match of payload.matchAll(regex)) {
@@ -47,7 +48,13 @@ const parseWordTags = (payload: string): WordTag[] => {
       charIndex: Number(charIndex),
     });
   }
-  return tags;
+  // A trailing single-value tag (e.g. <2476>) marks the line's end offset.
+  let end: number | undefined;
+  for (const match of payload.matchAll(/<\s*(\d+)\s*>/g)) {
+    const value = Number(match[1]);
+    if (!Number.isNaN(value)) end = Math.max(end ?? 0, value);
+  }
+  return { tags, end };
 };
 
 type ParsedFanchant = Pick<FanchantTag, 'content' | 'duration' | 'type'> & {
@@ -76,7 +83,7 @@ export const parseLrc = (input: string): LyricLine[] => {
   const lines: LyricLine[] = [];
   const lineByTime = new Map<number, LyricLine>();
   const lineOrder = new Map<string, number>();
-  const autoDurationFanchants: Array<{ id: string; startTime: number }> = [];
+  const autoDurationFanchants: Array<{ line: LyricLine; tag: FanchantTag }> = [];
   let lineIndex = 0;
   let lastLyricLine: LyricLine | null = null;
   let offsetMs = 0;
@@ -99,19 +106,33 @@ export const parseLrc = (input: string): LyricLine[] => {
 
     const rawContent = trimmed.replace(timeTagRegex, '').trim();
     if (!rawContent) continue;
+
+    const translationMatch = rawContent.match(translationContentRegex);
+    if (translationMatch && translationMatch[2].trim().length > 0) {
+      for (const startTime of adjustedTimes) {
+        const target = lineByTime.get(startTime) ?? lastLyricLine;
+        if (!target) continue;
+        target.translation = translationMatch[2].trim();
+        const lang = translationMatch[1]?.trim();
+        if (lang) target.translationLang = lang;
+      }
+      continue;
+    }
+
     if (metaLineContentRegex.test(rawContent)) continue;
     const content = rawContent.replace(inlineMetaTagRegex, '').trim();
     if (!content) continue;
 
     if (content.startsWith('[tt]')) {
       const payload = content.replace(/^\[tt\]\s*/, '');
-      const wordTags = parseWordTags(payload);
+      const { tags: wordTags, end: wordsEnd } = parseWordTags(payload);
       if (wordTags.length === 0) continue;
 
       for (const startTime of adjustedTimes) {
         const target = lineByTime.get(startTime) ?? lastLyricLine;
         if (!target) continue;
         target.words = wordTags;
+        if (wordsEnd !== undefined) target.wordsEnd = wordsEnd;
       }
       continue;
     }
@@ -124,7 +145,7 @@ export const parseLrc = (input: string): LyricLine[] => {
       for (const startTime of adjustedTimes) {
         const target = lineByTime.get(startTime) ?? lastLyricLine;
         if (!target) continue;
-        target.fanchant = {
+        const tag: FanchantTag = {
           content: fanchant.content,
           duration: fanchant.duration,
           type: fanchant.type,
@@ -133,8 +154,9 @@ export const parseLrc = (input: string): LyricLine[] => {
           fullLine: false,
           ...(fanchant.autoDuration ? { autoDuration: true } : {}),
         };
+        target.fanchants.push(tag);
         if (fanchant.autoDuration) {
-          autoDurationFanchants.push({ id: target.id, startTime });
+          autoDurationFanchants.push({ line: target, tag });
         }
       }
       continue;
@@ -148,6 +170,7 @@ export const parseLrc = (input: string): LyricLine[] => {
         startTime,
         text: content,
         words: [],
+        fanchants: [],
       };
       lines.push(line);
       lineByTime.set(startTime, line);
@@ -162,28 +185,35 @@ export const parseLrc = (input: string): LyricLine[] => {
     return (lineOrder.get(a.id) ?? 0) - (lineOrder.get(b.id) ?? 0);
   });
   if (autoDurationFanchants.length > 0) {
-    const autoById = new Map<string, number>();
-    autoDurationFanchants.forEach(({ id, startTime }) => {
-      autoById.set(id, startTime);
-    });
+    const indexById = new Map<string, number>();
     sorted.forEach((line, index) => {
-      const startTime = autoById.get(line.id);
-      if (!line.fanchant || startTime === undefined) return;
+      indexById.set(line.id, index);
+    });
+    autoDurationFanchants.forEach(({ line, tag }) => {
+      const index = indexById.get(line.id);
+      if (index === undefined) return;
+      const startTime = tag.startTime;
       const nextStart = sorted[index + 1]?.startTime ?? line.startTime + 2000;
       const wordOffset = line.words.reduce((max, word) => Math.max(max, word.offset), -1);
+      const measuredEnd = line.wordsEnd ?? (wordOffset >= 0 ? wordOffset : -1);
       const roughLineEnd =
-        wordOffset >= 0
-          ? Math.max(line.startTime + wordOffset, line.startTime + 400)
+        measuredEnd >= 0
+          ? Math.max(line.startTime + measuredEnd, line.startTime + 400)
           : Math.max(nextStart, line.startTime + 400);
       // When a fanchant starts at the final word boundary, extend to the sentence tail.
       const lineEnd =
         roughLineEnd <= startTime ? Math.max(nextStart, startTime + 400) : roughLineEnd;
       const duration = Math.max(lineEnd - startTime, 1);
-      line.fanchant.duration = duration;
-      line.fanchant.endTime = startTime + duration;
-      line.fanchant.fullLine = startTime === line.startTime;
-      line.fanchant.autoDuration = true;
+      tag.duration = duration;
+      tag.endTime = startTime + duration;
+      tag.fullLine = startTime === line.startTime;
+      tag.autoDuration = true;
     });
   }
+  sorted.forEach((line) => {
+    if (line.fanchants.length > 1) {
+      line.fanchants.sort((a, b) => a.startTime - b.startTime);
+    }
+  });
   return sorted;
 };
